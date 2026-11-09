@@ -19,6 +19,7 @@ export function SettingsScreen(props: {
   onCopyLogs: () => void;
   onShareLogs: () => void;
   onShowGuide: () => void;
+  onDiagnose: () => void;
 }) {
   const [d, setD] = useState(props.settings);
   useEffect(() => {
@@ -102,9 +103,16 @@ export function SettingsScreen(props: {
           <SectionTitle>العرض</SectionTitle>
           <Card>
             <SettingRow
+              icon="form-dropdown"
+              title="قوائم EMIS كالكمبيوتر (موصى به)"
+              subtitle="يعرّف التطبيقُ نفسه لـ EMIS كمتصفح كمبيوتر، فتفتح القوائم المنسدلة تحت الحقل بدل نافذة تغطي الشاشة، فيستطيع المساعد الضغط على الخيار."
+              value={d.desktopUA}
+              onChange={v => set('desktopUA', v)}
+            />
+            <SettingRow
               icon="monitor"
               title="EMIS بوضع الكمبيوتر"
-              subtitle="يعرض EMIS بعرض شاشة الحاسوب. جرّبه إن فشل اختيار بعض القوائم."
+              subtitle="يعرض صفحة EMIS بعرض شاشة الحاسوب (صغيرة، كبّرها بإصبعين)."
               value={d.desktopEmis}
               onChange={v => set('desktopEmis', v)}
             />
@@ -162,6 +170,7 @@ export function SettingsScreen(props: {
                   ))}
               </View>
             ) : null}
+            <Button kind="ghost" icon="stethoscope" label="تشخيص قائمة «الجنس» في EMIS" onPress={props.onDiagnose} compact />
             <Button kind="ghost" icon="help-circle-outline" label="طريقة الاستخدام" onPress={props.onShowGuide} compact />
           </Card>
 

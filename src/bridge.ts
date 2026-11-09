@@ -131,6 +131,7 @@ const SHIM = String.raw`
   setInterval(function () {
     try {
       var ui = document.getElementById('emis-helper-ui');
+      if (ui && window.__gmHideBar && ui.style.getPropertyValue('display') !== 'none') ui.style.setProperty('display', 'none', 'important');
       var body = ui && ui.children[1];
       if (!body) return;
       var name = (body.children[0] && body.children[0].textContent) || '';
@@ -148,7 +149,7 @@ const SHIM = String.raw`
 /** السكربت الذي يُحقن في كل صفحة (موقع الطلاب و EMIS) */
 export function buildInjection(siteHosts: string[], emisHosts: string[], hideBar: boolean): string {
   const hide = hideBar
-    ? "(function(){try{var st=document.createElement('style');st.textContent='#emis-helper-ui{display:none!important}';(document.head||document.documentElement).appendChild(st);}catch(e){}})();\n"
+    ? "window.__gmHideBar=true;(function(){try{var st=document.createElement('style');st.textContent='#emis-helper-ui{display:none!important}';(document.head||document.documentElement).appendChild(st);}catch(e){}})();\n"
     : '';
   return (
     hide +
@@ -208,6 +209,44 @@ export function clickBarJs(action: string, label: string): string {
     JSON.stringify(action) +
     ',ok:ok}))}catch(e){}})();true;'
   );
+}
+
+/**
+ * تشخيص قائمة منسدلة في EMIS: يفتح القائمة بجانب العنوان المعطى، ثم يسجّل أين ظهرت الخيارات
+ * وما نوعها، ليُرسل في السجل.
+ */
+export function diagnoseListJs(label: string, words: string[]): string {
+  return String.raw`(function(){
+  var post=function(m){try{window.ReactNativeWebView.postMessage(JSON.stringify({__gm:'log',level:'warn',msg:'[EMIS diag] '+m}))}catch(e){}};
+  var norm=function(s){return (s||'').replace(/[ً-ٰٟـ]/g,'').replace(/[أإآ]/g,'ا').replace(/ى/g,'ي').replace(/ة/g,'ه').replace(/[*:]/g,'').replace(/\s+/g,'');};
+  var R=function(e){var r=e.getBoundingClientRect();return Math.round(r.left)+','+Math.round(r.top)+' '+Math.round(r.width)+'x'+Math.round(r.height);};
+  var D=function(e){var a=[];for(var i=0;i<4&&e;i++,e=e.parentElement){a.push(e.tagName.toLowerCase()+(e.id?'#'+e.id:'')+(e.className&&e.className.baseVal===undefined?'.'+String(e.className).trim().split(/\s+/).slice(0,3).join('.'):'')+(e.getAttribute('role')?'[role='+e.getAttribute('role')+']':''));}return a.join(' < ');};
+  try{
+    var want=norm(${JSON.stringify(label)});
+    var lab=[].slice.call(document.querySelectorAll('body *')).find(function(e){
+      var own=[].slice.call(e.childNodes).filter(function(n){return n.nodeType===3}).map(function(n){return n.textContent}).join('');
+      return norm(own)===want && e.getClientRects().length;});
+    if(!lab){post('لم أجد عنوان «'+${JSON.stringify(label)}+'»');return;}
+    var box=lab, ctrl=null;
+    for(var i=0;i<5&&box.parentElement&&!ctrl;i++){box=box.parentElement;ctrl=box.querySelector('[role=combobox],.p-select,.p-dropdown,select,input:not([type=hidden]),[tabindex="0"]');}
+    post('viewport '+innerWidth+'x'+innerHeight+' vv='+(window.visualViewport?Math.round(visualViewport.width)+'x'+Math.round(visualViewport.height):'-')+' ua='+navigator.userAgent.slice(0,60));
+    if(!ctrl){post('لم أجد الحقل');return;}
+    post('الحقل: '+D(ctrl)+' @'+R(ctrl)+' html='+ctrl.outerHTML.slice(0,400));
+    ctrl.scrollIntoView({block:'center'});
+    setTimeout(function(){
+      ctrl.click();
+      setTimeout(function(){
+        var ws=${JSON.stringify(words)}.map(norm), hits=[];
+        [].slice.call(document.querySelectorAll('body *')).forEach(function(e){
+          if(e.children.length>2||!e.getClientRects().length)return;
+          var t=norm(e.textContent);if(ws.indexOf(t)<0)return;hits.push(t+' :: '+D(e)+' @'+R(e));});
+        post('بعد الفتح: الحقل @'+R(ctrl)+' | العنصر النشط: '+(document.activeElement?D(document.activeElement):'-'));
+        post('الخيارات ('+hits.length+'): '+hits.slice(0,8).join(' || '));
+        try{document.activeElement&&document.activeElement.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true}));}catch(e){}
+      },1200);
+    },400);
+  }catch(e){post('خطأ: '+e);}
+})();true;`;
 }
 
 /** رد التطبيق على «hello»: يرسل كل القيم المحفوظة ثم يشغّل السكربت */

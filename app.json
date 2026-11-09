@@ -2,19 +2,21 @@
   "expo": {
     "name": "مساعد EMIS",
     "slug": "emishelper",
-    "version": "7.6.1",
+    "version": "7.6.2",
     "orientation": "default",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "light",
     "backgroundColor": "#0f3b57",
     "splash": {
-      "backgroundColor": "#0f3b57"
+      "image": "./assets/splash-icon.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#0F3B57"
     },
     "android": {
       "package": "com.emishelper.app",
-      "versionCode": 761,
+      "versionCode": 762,
       "adaptiveIcon": {
-        "backgroundColor": "#006D77",
+        "backgroundColor": "#0F3B57",
         "foregroundImage": "./assets/android-icon-foreground.png",
         "backgroundImage": "./assets/android-icon-background.png",
         "monochromeImage": "./assets/android-icon-monochrome.png"

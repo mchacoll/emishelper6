@@ -4,6 +4,7 @@ export type Settings = {
   split: boolean; // عرض النافذتين معاً (أعلى/أسفل)
   autoSwitch: boolean; // الانتقال تلقائياً إلى EMIS عند «تعبئة» ثم العودة بعد الحفظ
   desktopEmis: boolean; // عرض EMIS بعرض شاشة الكمبيوتر
+  desktopUA: boolean; // تعريف EMIS بأننا متصفح كمبيوتر (القوائم تفتح تحت الحقل بدل نافذة)
   autoFillNext: boolean; // بعد «تمت المراجعة»: فتح «جديد» في EMIS وتعبئته تلقائياً
   showPageBar: boolean; // إظهار الشريط الأزرق داخل الصفحات (القديم)
   autoPilot: boolean; // الإضافة التلقائية: مراقبة موقع الطلاب وإدخال كل استمارة جديدة في EMIS
@@ -17,6 +18,7 @@ export const DEFAULT_SETTINGS: Settings = {
   split: false,
   autoSwitch: true,
   desktopEmis: false,
+  desktopUA: true,
   autoFillNext: false,
   showPageBar: false,
   autoPilot: false,

@@ -4,7 +4,7 @@ import { useFonts } from 'expo-font';
 import { activateKeepAwakeAsync, deactivateKeepAwake } from 'expo-keep-awake';
 import { StatusBar } from 'expo-status-bar';
 import { type RefObject, useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { ActivityIndicator, BackHandler, Pressable, Share, StyleSheet, ToastAndroid, View } from 'react-native';
+import { ActivityIndicator, Alert, BackHandler, Pressable, Share, StyleSheet, ToastAndroid, View } from 'react-native';
 import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
 import WebView, { type WebViewMessageEvent, type WebViewNavigation } from 'react-native-webview';
 
@@ -12,6 +12,7 @@ import {
   buildInjection,
   clickBarJs,
   desktopViewportJs,
+  diagnoseListJs,
   hostOf,
   parseBridgeMessage,
   remoteSetJs,
@@ -35,6 +36,9 @@ const K_STATUS = 'emis_status_v2';
 const K_AUTO_REVIEW = 'emis_auto_review';
 const K_CHAIN = 'emis_chain_new_v3';
 const DESKTOP_WIDTH = 1280;
+// متصفح كمبيوتر: EMIS يفتح القوائم المنسدلة تحت الحقل بدل نافذة ملء الشاشة الخاصة بالهاتف
+const DESKTOP_UA =
+  'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/138.0.0.0 Safari/537.36';
 
 // نصوص أزرار شريط السكربت (نضغطها من لوحة التطبيق)
 const BAR = { fill: 'ابدأ', page2: 'ص2', stop: 'إيقاف', done: 'تمت المراجعة', skip: 'التالي' } as const;
@@ -433,6 +437,35 @@ function Main() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [settings.autoPilot]);
 
+  const enableAutoPilot = () => {
+    setApPaused(false);
+    apPausedRef.current = false;
+    lastActivity.current = 0;
+    setApNote('سيبدأ الفحص الآن');
+    saveSettings({ ...settingsRef.current, autoPilot: true });
+  };
+
+  // زر 🤖 في اللوحة
+  const onAutoPilotPress = () => {
+    const s = settingsRef.current;
+    if (!s.autoPilot) {
+      Alert.alert(
+        'الإضافة التلقائية',
+        `كل ${s.autoPilotMinutes === 1 ? 'دقيقة' : s.autoPilotMinutes + ' دقائق'} يفحص التطبيق موقع الطلاب، ويُدخل كل استمارة جديدة (ليس عليها «تمت المراجعة») في EMIS ويحفظها ثم يحددها «تمت المراجعة».\n\nيعمل والتطبيق مفتوح وأنت مسجّل الدخول في EMIS، ويتوقف عند أي حقل ناقص. جرّب «تعبئة» يدوياً على طالب واحد أولاً.`,
+        [
+          { text: 'إلغاء', style: 'cancel' },
+          { text: 'تشغيل', onPress: enableAutoPilot },
+        ],
+      );
+      return;
+    }
+    Alert.alert('الإضافة التلقائية', apPausedRef.current ? 'متوقفة مؤقتاً' : 'تعمل الآن', [
+      { text: 'إلغاء', style: 'cancel' },
+      { text: 'إيقاف نهائي', style: 'destructive', onPress: () => saveSettings({ ...settingsRef.current, autoPilot: false }) },
+      { text: apPausedRef.current ? 'استئناف' : 'إيقاف مؤقت', onPress: toggleAutoPilot },
+    ]);
+  };
+
   const toggleAutoPilot = () => {
     if (apPausedRef.current) {
       setApPaused(false);
@@ -517,12 +550,13 @@ function Main() {
         pointerEvents={on ? 'auto' : 'none'}
       >
         <WebView
-          key={`${p}-${reloadKey[p]}-${url}-${desktop ? 'd' : 'm'}-${settings.showPageBar ? 'b' : 'n'}`}
+          key={`${p}-${reloadKey[p]}-${url}-${desktop ? 'd' : 'm'}-${settings.showPageBar ? 'b' : 'n'}-${p === 'emis' && settings.desktopUA ? 'u' : ''}`}
           ref={views[p]}
           source={{ uri: url }}
           style={styles.fill}
           injectedJavaScript={injection}
           injectedJavaScriptBeforeContentLoaded={desktop ? desktopViewportJs(DESKTOP_WIDTH) : undefined}
+          userAgent={p === 'emis' && settings.desktopUA ? DESKTOP_UA : undefined}
           injectedJavaScriptForMainFrameOnly
           onMessage={onMessage(p)}
           onNavigationStateChange={onNav(p)}
@@ -607,7 +641,7 @@ function Main() {
             onDone={() => onAction('done')}
             onSkip={() => onAction('skip')}
             autoPilot={autoPilotInfo}
-            onToggleAutoPilot={toggleAutoPilot}
+            onAutoPilotPress={onAutoPilotPress}
           />
         </SafeAreaView>
       </View>
@@ -636,6 +670,12 @@ function Main() {
             .catch(() => toast('تعذّر النسخ'))
         }
         onShareLogs={() => Share.share({ message: buildLogText() }).catch(() => {})}
+        onDiagnose={() => {
+          setShowSettings(false);
+          if (!settingsRef.current.split) setActive('emis');
+          emisRef.current?.injectJavaScript(diagnoseListJs('الجنس', ['ذكر', 'أنثى']));
+          toast('افتح استمارة «جديد» في EMIS أولاً. سيظهر التشخيص في السجل بعد ثانيتين، ثم انسخه وأرسله');
+        }}
         onShowGuide={() => {
           setShowSettings(false);
           setShowGuide(true);

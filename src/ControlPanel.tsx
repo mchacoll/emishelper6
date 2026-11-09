@@ -1,8 +1,9 @@
 import { useEffect, useRef, useState } from 'react';
-import { Animated, Pressable, ScrollView, StyleSheet, View } from 'react-native';
+import { Animated, Modal, Pressable, ScrollView, StyleSheet, View } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { colors, radius, ROW, shadow } from './theme';
-import { Button, Icon, type IconName, T } from './ui';
+import { Button, Icon, IconButton, type IconName, T } from './ui';
 
 export type Student = {
   name?: string;
@@ -26,13 +27,13 @@ export type AutoPilotInfo = {
 
 const PHASE: Record<Phase, { label: string; icon: IconName; fg: string; bg: string }> = {
   idle: { label: 'جاهز', icon: 'circle-outline', fg: colors.blue, bg: colors.blueSoft },
-  filling: { label: 'جارٍ التعبئة', icon: 'progress-pencil', fg: colors.orange, bg: colors.orangeSoft },
-  opening: { label: 'فتح «جديد»', icon: 'file-plus-outline', fg: colors.orange, bg: colors.orangeSoft },
-  saved: { label: 'تم الحفظ', icon: 'check-circle', fg: colors.green, bg: colors.greenSoft },
-  incomplete: { label: 'يحتاج إكمال', icon: 'alert-circle', fg: colors.red, bg: colors.redSoft },
+  filling: { label: 'يعبّئ', icon: 'progress-pencil', fg: colors.orange, bg: colors.orangeSoft },
+  opening: { label: 'فتح جديد', icon: 'file-plus-outline', fg: colors.orange, bg: colors.orangeSoft },
+  saved: { label: 'حُفظ', icon: 'check-circle', fg: colors.green, bg: colors.greenSoft },
+  incomplete: { label: 'ناقص', icon: 'alert-circle', fg: colors.red, bg: colors.redSoft },
   stopped: { label: 'متوقف', icon: 'stop-circle', fg: colors.red, bg: colors.redSoft },
-  info: { label: 'جاهز للتعبئة', icon: 'information', fg: colors.blue, bg: colors.blueSoft },
-  checking: { label: 'فحص الاستمارات', icon: 'radar', fg: colors.orange, bg: colors.orangeSoft },
+  info: { label: 'جاهز', icon: 'information', fg: colors.blue, bg: colors.blueSoft },
+  checking: { label: 'يفحص', icon: 'radar', fg: colors.orange, bg: colors.orangeSoft },
 };
 
 export function ControlPanel(props: {
@@ -47,42 +48,19 @@ export function ControlPanel(props: {
   onDone: () => void;
   onSkip: () => void;
   autoPilot: AutoPilotInfo;
-  onToggleAutoPilot: () => void;
+  onAutoPilotPress: () => void;
 }) {
   const [collapsed, setCollapsed] = useState(false);
   const [showLog, setShowLog] = useState(false);
   const [logTab, setLogTab] = useState<'emis' | 'site'>('emis');
   const busy = props.phase === 'filling' || props.phase === 'opening' || props.phase === 'checking';
-  const ap = props.autoPilot;
-  const apStrip = ap.enabled ? (
-    <View style={[styles.apStrip, { backgroundColor: ap.paused ? colors.redSoft : colors.greenSoft }]}>
-      <Icon name={ap.paused ? 'robot-off-outline' : 'robot-outline'} size={20} color={ap.paused ? colors.red : colors.green} />
-      <View style={{ flex: 1 }}>
-        <T bold style={{ fontSize: 12, color: ap.paused ? colors.red : colors.green }}>
-          {ap.paused ? 'الإضافة التلقائية متوقفة' : 'الإضافة التلقائية تعمل'}
-          {ap.count ? ` · أُضيف ${ap.count}` : ''}
-        </T>
-        {ap.note ? (
-          <T style={{ fontSize: 11, color: colors.muted }} numberOfLines={2}>
-            {ap.note}
-          </T>
-        ) : null}
-      </View>
-      <Button
-        kind={ap.paused ? 'primary' : 'ghost'}
-        icon={ap.paused ? 'play' : 'pause'}
-        label={ap.paused ? 'استئناف' : 'إيقاف مؤقت'}
-        onPress={props.onToggleAutoPilot}
-        compact
-      />
-    </View>
-  ) : null;
   const ph = PHASE[props.phase];
   const s = props.student;
+  const ap = props.autoPilot;
   const fullName = s ? [s.name, s.father, s.grandfather].filter(Boolean).join(' ') : '';
-  const meta = s ? [s.school, s.grade, s.section && `شعبة ${s.section}`].filter(Boolean).join(' · ') : '';
+  const meta = s ? [s.grade, s.section && `شعبة ${s.section}`].filter(Boolean).join(' · ') : '';
 
-  // نبض بسيط لشارة الحالة أثناء العمل
+  // نبض لشارة الحالة أثناء العمل
   const pulse = useRef(new Animated.Value(1)).current;
   useEffect(() => {
     if (!busy) {
@@ -91,126 +69,123 @@ export function ControlPanel(props: {
     }
     const a = Animated.loop(
       Animated.sequence([
-        Animated.timing(pulse, { toValue: 0.45, duration: 650, useNativeDriver: true }),
-        Animated.timing(pulse, { toValue: 1, duration: 650, useNativeDriver: true }),
+        Animated.timing(pulse, { toValue: 0.4, duration: 600, useNativeDriver: true }),
+        Animated.timing(pulse, { toValue: 1, duration: 600, useNativeDriver: true }),
       ]),
     );
     a.start();
     return () => a.stop();
   }, [busy, pulse]);
 
-  const logText = (logTab === 'emis' ? props.emisLog : props.siteLog).trim();
-  const lastLines = props.emisLog.trim().split('\n').filter(Boolean).slice(-2).join('\n');
+  const apColor = !ap.enabled ? colors.muted : ap.paused ? colors.red : colors.green;
+  const apBg = !ap.enabled ? colors.bg : ap.paused ? colors.redSoft : colors.greenSoft;
 
-  const badge = (
-    <Animated.View style={[styles.badge, { backgroundColor: ph.bg, opacity: pulse }]}>
-      <Icon name={ph.icon} size={14} color={ph.fg} />
-      <T bold style={{ fontSize: 12, color: ph.fg }}>
-        {ph.label}
-      </T>
-    </Animated.View>
+  // سطر واحد للملاحظات: سبب النقص / حالة الإضافة التلقائية
+  const note = props.detail || (ap.enabled ? ap.note : '') || (s?.reviewed ? 'هذا الطالب عليه «تمت المراجعة»' : '');
+  const noteColor = props.detail ? ph.fg : ap.enabled ? apColor : colors.purple;
+
+  const logModal = (
+    <Modal visible={showLog} animationType="slide" transparent onRequestClose={() => setShowLog(false)}>
+      <Pressable style={styles.backdrop} onPress={() => setShowLog(false)} />
+      <SafeAreaView edges={['bottom']} style={styles.logSheet}>
+        <View style={[styles.row, { justifyContent: 'space-between' }]}>
+          <T bold style={{ fontSize: 16 }}>
+            السجل
+          </T>
+          <IconButton icon="close" onPress={() => setShowLog(false)} color={colors.text} bg={colors.bg} size={34} />
+        </View>
+        <View style={[styles.row, { gap: 6 }]}>
+          {(['emis', 'site'] as const).map(k => (
+            <Pressable key={k} onPress={() => setLogTab(k)} style={[styles.tab, logTab === k && styles.tabOn]}>
+              <T bold style={{ fontSize: 12, color: logTab === k ? '#fff' : colors.muted }}>
+                {k === 'emis' ? 'EMIS' : 'موقع الطلاب'}
+              </T>
+            </Pressable>
+          ))}
+        </View>
+        <ScrollView style={styles.logBox}>
+          <T selectable style={{ fontSize: 12, lineHeight: 20 }}>
+            {(logTab === 'emis' ? props.emisLog : props.siteLog).trim() || '—'}
+          </T>
+        </ScrollView>
+      </SafeAreaView>
+    </Modal>
   );
 
   if (collapsed) {
     return (
-      <View style={[styles.sheet, styles.sheetCollapsed]}>
-        {apStrip}
-        <Pressable style={styles.collapsedRow} onPress={() => setCollapsed(false)}>
-          {badge}
-          <T bold style={{ flex: 1, fontSize: 14 }} numberOfLines={1}>
-            {fullName || 'لا يوجد طالب محدد'}
+      <View style={styles.pillWrap} pointerEvents="box-none">
+        <Pressable onPress={() => setCollapsed(false)} style={[styles.pill, shadow]}>
+          <Animated.View style={[styles.dot, { backgroundColor: ph.fg, opacity: pulse }]} />
+          <T bold style={{ fontSize: 13, maxWidth: 150 }} numberOfLines={1}>
+            {s?.name ? `${s.name} ${s.father || ''}` : ph.label}
           </T>
-          <Icon name="chevron-up" size={24} color={colors.muted} />
+          {ap.enabled ? <Icon name="robot-outline" size={16} color={apColor} /> : null}
+          <Icon name="chevron-up" size={20} color={colors.muted} />
         </Pressable>
-        <View style={{ flexDirection: ROW, gap: 8 }}>
-          {busy ? (
-            <Button kind="danger" icon="stop" label="إيقاف" onPress={props.onStop} compact style={{ flex: 1 }} />
-          ) : (
-            <Button kind="gold" icon="play" label="تعبئة" onPress={props.onFill} compact style={{ flex: 1 }} />
-          )}
-          <Button kind="purple" icon="check-all" label="تم ⏭" onPress={props.onDone} compact style={{ flex: 1 }} disabled={busy} />
-        </View>
+        {busy ? (
+          <Pressable onPress={props.onStop} style={[styles.pillBtn, { backgroundColor: colors.red }, shadow]}>
+            <Icon name="stop" size={22} color="#fff" />
+          </Pressable>
+        ) : (
+          <Pressable onPress={props.onFill} style={[styles.pillBtn, { backgroundColor: colors.gold }, shadow]}>
+            <Icon name="play" size={22} color={colors.navyDark} />
+          </Pressable>
+        )}
       </View>
     );
   }
 
   return (
     <View style={styles.sheet}>
-      <Pressable onPress={() => setCollapsed(true)} hitSlop={8} style={styles.handleWrap}>
-        <View style={styles.handle} />
-      </Pressable>
-
-      {apStrip}
-
-      {/* بطاقة الطالب */}
-      <View style={styles.studentRow}>
-        <View style={styles.avatar}>
-          <Icon name="account-school" size={26} color={colors.navy} />
-        </View>
-        <View style={{ flex: 1, gap: 1 }}>
-          <T bold style={{ fontSize: 16 }} numberOfLines={1}>
-            {fullName || 'لا يوجد طالب محدد'}
+      {logModal}
+      {/* السطر الأول: الطالب + الحالة + أدوات */}
+      <View style={styles.row}>
+        <Animated.View style={[styles.badge, { backgroundColor: ph.bg, opacity: pulse }]}>
+          <Icon name={ph.icon} size={13} color={ph.fg} />
+          <T bold style={{ fontSize: 11, color: ph.fg }}>
+            {ph.label}
           </T>
-          <T style={{ fontSize: 12, color: colors.muted }} numberOfLines={1}>
-            {meta || (s ? '—' : 'افتح صفحة الطالب في «موقع الطلاب»')}
+        </Animated.View>
+        <View style={{ flex: 1 }}>
+          <T bold style={{ fontSize: 14 }} numberOfLines={1}>
+            {fullName || 'افتح صفحة طالب في «موقع الطلاب»'}
           </T>
-        </View>
-        {badge}
-      </View>
-
-      {props.detail ? (
-        <View style={[styles.detail, { backgroundColor: ph.bg }]}>
-          <T style={{ fontSize: 12, color: ph.fg, lineHeight: 18 }} numberOfLines={3}>
-            {props.detail}
-          </T>
-        </View>
-      ) : null}
-      {s?.reviewed ? (
-        <View style={[styles.detail, { backgroundColor: colors.purpleSoft }]}>
-          <T style={{ fontSize: 12, color: colors.purple }}>هذا الطالب عليه «تمت المراجعة» — اضغط «تم ⏭» للانتقال</T>
-        </View>
-      ) : null}
-
-      {/* الأزرار */}
-      <View style={styles.actions}>
-        {busy ? (
-          <Button kind="danger" icon="stop" label="إيقاف" onPress={props.onStop} style={{ flex: 2 }} />
-        ) : (
-          <Button kind="gold" icon="play" label="تعبئة في EMIS" onPress={props.onFill} style={{ flex: 2 }} disabled={!s} />
-        )}
-        <Button kind="soft" icon="numeric-2-box-outline" label="ص2" onPress={props.onPage2} style={{ flex: 1 }} disabled={busy || !s} />
-      </View>
-      <View style={styles.actions}>
-        <Button kind="purple" icon="check-all" label="تمت المراجعة ⏭" onPress={props.onDone} style={{ flex: 2 }} disabled={busy} />
-        <Button kind="ghost" icon="skip-next" label="تخطي" onPress={props.onSkip} style={{ flex: 1 }} disabled={busy} />
-      </View>
-
-      {/* السجل */}
-      <Pressable onPress={() => setShowLog(v => !v)} style={styles.logHead}>
-        <Icon name="text-box-outline" size={18} color={colors.muted} />
-        <T style={{ flex: 1, fontSize: 12, color: colors.muted }} numberOfLines={showLog ? 1 : 2}>
-          {showLog ? 'السجل' : lastLines || 'السجل فارغ'}
-        </T>
-        <Icon name={showLog ? 'chevron-down' : 'chevron-left'} size={20} color={colors.muted} />
-      </Pressable>
-      {showLog ? (
-        <View style={styles.logBox}>
-          <View style={styles.logTabs}>
-            {(['emis', 'site'] as const).map(k => (
-              <Pressable key={k} onPress={() => setLogTab(k)} style={[styles.logTab, logTab === k && styles.logTabOn]}>
-                <T bold style={{ fontSize: 12, color: logTab === k ? '#fff' : colors.muted }}>
-                  {k === 'emis' ? 'EMIS' : 'موقع الطلاب'}
-                </T>
-              </Pressable>
-            ))}
-          </View>
-          <ScrollView style={{ maxHeight: 180 }} nestedScrollEnabled>
-            <T selectable style={{ fontSize: 12, lineHeight: 19 }}>
-              {logText || '—'}
+          {meta ? (
+            <T style={{ fontSize: 11, color: colors.muted, marginTop: -2 }} numberOfLines={1}>
+              {meta}
             </T>
-          </ScrollView>
+          ) : null}
         </View>
+        <Pressable onPress={props.onAutoPilotPress} style={[styles.apBtn, { backgroundColor: apBg }]} hitSlop={4}>
+          <Icon name={ap.enabled && !ap.paused ? 'robot' : 'robot-outline'} size={18} color={apColor} />
+          {ap.enabled && ap.count ? (
+            <T bold style={{ fontSize: 11, color: apColor }}>
+              {ap.count}
+            </T>
+          ) : null}
+        </Pressable>
+        <IconButton icon="text-box-outline" onPress={() => setShowLog(true)} color={colors.muted} bg={colors.bg} size={32} />
+        <IconButton icon="chevron-down" onPress={() => setCollapsed(true)} color={colors.muted} bg={colors.bg} size={32} />
+      </View>
+
+      {note ? (
+        <T style={{ fontSize: 11, color: noteColor, lineHeight: 16 }} numberOfLines={2}>
+          {note}
+        </T>
       ) : null}
+
+      {/* السطر الثاني: الأزرار */}
+      <View style={styles.row}>
+        {busy ? (
+          <Button kind="danger" icon="stop" label="إيقاف" onPress={props.onStop} compact style={{ flex: 1.5 }} />
+        ) : (
+          <Button kind="gold" icon="play" label="تعبئة" onPress={props.onFill} compact style={{ flex: 1.5 }} disabled={!s} />
+        )}
+        <Button kind="soft" label="ص2" onPress={props.onPage2} compact style={{ flex: 0.8 }} disabled={busy || !s} />
+        <Button kind="purple" icon="check-all" label="تم ⏭" onPress={props.onDone} compact style={{ flex: 1.3 }} disabled={busy} />
+        <Button kind="ghost" icon="skip-next" onPress={props.onSkip} compact style={{ flex: 0.6 }} disabled={busy} />
+      </View>
     </View>
   );
 }
@@ -218,54 +193,55 @@ export function ControlPanel(props: {
 const styles = StyleSheet.create({
   sheet: {
     backgroundColor: colors.card,
-    borderTopLeftRadius: radius.xl,
-    borderTopRightRadius: radius.xl,
-    paddingHorizontal: 14,
-    paddingBottom: 10,
-    gap: 10,
+    borderTopLeftRadius: radius.lg,
+    borderTopRightRadius: radius.lg,
+    paddingHorizontal: 10,
+    paddingTop: 8,
+    paddingBottom: 8,
+    gap: 6,
     ...shadow,
   },
-  sheetCollapsed: { paddingTop: 10 },
-  handleWrap: { alignItems: 'center', paddingTop: 8, paddingBottom: 2 },
-  handle: { width: 44, height: 5, borderRadius: 3, backgroundColor: colors.border },
-  collapsedRow: { flexDirection: ROW, alignItems: 'center', gap: 10 },
-  studentRow: { flexDirection: ROW, alignItems: 'center', gap: 12 },
-  avatar: {
-    width: 46,
-    height: 46,
-    borderRadius: 14,
-    backgroundColor: colors.goldSoft,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
+  row: { flexDirection: ROW, alignItems: 'center', gap: 6 },
   badge: {
     flexDirection: ROW,
     alignItems: 'center',
-    gap: 4,
-    paddingHorizontal: 10,
-    paddingVertical: 4,
+    gap: 3,
+    paddingHorizontal: 8,
+    paddingVertical: 3,
     borderRadius: 999,
   },
-  detail: { borderRadius: radius.md, paddingHorizontal: 12, paddingVertical: 8 },
-  apStrip: {
+  apBtn: {
     flexDirection: ROW,
     alignItems: 'center',
+    gap: 2,
+    height: 32,
+    minWidth: 32,
+    paddingHorizontal: 7,
+    borderRadius: 11,
+    justifyContent: 'center',
+  },
+  pillWrap: { flexDirection: ROW, alignItems: 'center', gap: 8, padding: 10, justifyContent: 'flex-start' },
+  pill: {
+    flexDirection: ROW,
+    alignItems: 'center',
+    gap: 6,
+    backgroundColor: colors.card,
+    borderRadius: 999,
+    paddingHorizontal: 12,
+    height: 40,
+  },
+  pillBtn: { width: 44, height: 44, borderRadius: 22, alignItems: 'center', justifyContent: 'center' },
+  dot: { width: 9, height: 9, borderRadius: 5 },
+  backdrop: { flex: 1, backgroundColor: 'rgba(10,44,66,0.35)' },
+  logSheet: {
+    backgroundColor: colors.card,
+    borderTopLeftRadius: radius.xl,
+    borderTopRightRadius: radius.xl,
+    padding: 14,
     gap: 10,
-    borderRadius: radius.md,
-    paddingHorizontal: 10,
-    paddingVertical: 6,
+    maxHeight: '75%',
   },
-  actions: { flexDirection: ROW, gap: 8 },
-  logHead: {
-    flexDirection: ROW,
-    alignItems: 'center',
-    gap: 8,
-    borderTopWidth: 1,
-    borderTopColor: colors.border,
-    paddingTop: 8,
-  },
-  logBox: { backgroundColor: colors.bg, borderRadius: radius.md, padding: 10, gap: 8 },
-  logTabs: { flexDirection: ROW, gap: 6 },
-  logTab: { paddingHorizontal: 12, paddingVertical: 4, borderRadius: 999, backgroundColor: colors.card },
-  logTabOn: { backgroundColor: colors.navy },
+  tab: { paddingHorizontal: 14, paddingVertical: 5, borderRadius: 999, backgroundColor: colors.bg },
+  tabOn: { backgroundColor: colors.navy },
+  logBox: { backgroundColor: colors.bg, borderRadius: radius.md, padding: 10, minHeight: 160 },
 });

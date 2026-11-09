@@ -1,7 +1,7 @@
 // ==UserScript==
-// @name         مساعد EMIS – تعبئة تلقائية (v7.6.1)
+// @name         مساعد EMIS – تعبئة تلقائية (v7.6.2)
 // @namespace    emis-helper
-// @version      7.6.1
+// @version      7.6.2
 // @description  تعبئة تلقائية لـ EMIS + حفظ + «تمت المراجعة» + فتح «جديد» + نقل «الاحتياجات الخاصة» من EMIS إلى موقعك
 // @match        *://*/*
 // @grant        GM_setValue
@@ -315,7 +315,7 @@
     ui.dir = 'rtl';
 
     const head = mk('div', 'display:flex;justify-content:space-between;align-items:center;gap:8px');
-    head.appendChild(mk('b', 'font-size:13.5px;', title + ' v7.6.1'));
+    head.appendChild(mk('b', 'font-size:13.5px;', title + ' v7.6.2'));
     const minBtn = mk('button',
       'background:none;border:0;color:#fff;font-size:22px;' +
       'min-width:32px;min-height:32px;cursor:pointer;padding:0;line-height:1;', '−');
@@ -707,9 +707,51 @@
       if (!overlapX || !(below || above)) continue;
       rows.push({ el, text, d: Math.min(Math.abs(o.top - a.bottom), Math.abs(a.top - o.bottom)) });
     }
+    // (v7.6.2) على الهاتف قد تُفتح القائمة بعيداً عن الحقل (نافذة أعلى الصفحة أو وسطها).
+    // إن كانت هناك قائمة منسدلة مفتوحة نأخذ خياراتها هي أولاً، لا نصوص الحقول المجاورة
+    const near = rows.splice(0);
+    {
+      for (const box of openOverlays()) {
+        for (const el of box.querySelectorAll(OPT2)) {
+          if (inUI(el) || !vis(el) || el.children.length >= 4) continue;
+          const text = clean(el.textContent);
+          if (!text || text.length > 60) continue;
+          const o = el.getBoundingClientRect();
+          if (o.height < 8) continue;
+          rows.push({ el, text, d: Math.min(Math.abs(o.top - a.bottom), Math.abs(a.top - o.bottom)) });
+        }
+      }
+    }
+    if (!rows.length) rows.push(...near);
     return rows
       .filter(r => !rows.some(x => x !== r && r.el.contains(x.el) && x.text === r.text))
       .sort((x, y) => x.d - y.d);
+  }
+
+  // (v7.6.2) القوائم المنسدلة المفتوحة حالياً (PrimeVue / PrimeNG / Material / Vuetify / Element ...)
+  const OVERLAY_SEL = '[role=listbox],.q-menu,.q-dialog__inner,.q-select__dialog,.q-virtual-scroll__content,.p-select-overlay,.p-dropdown-panel,.p-multiselect-overlay,.p-multiselect-panel,' +
+    '.p-autocomplete-overlay,.p-autocomplete-panel,.p-overlay,.p-connected-overlay,.cdk-overlay-pane,.mat-mdc-select-panel,' +
+    '.ng-dropdown-panel,.select2-dropdown,.v-overlay__content,.v-menu,.el-select-dropdown,.el-popper,' +
+    '.ant-select-dropdown,.MuiPopover-paper,.MuiMenu-paper,.MuiAutocomplete-popper,[class*=popper],[class*=dropdown-menu],' +
+    '[class*=select-overlay],[class*=select-panel],[class*=select-dropdown],[class*=options-list]';
+  function openOverlays() {
+    const out = [];
+    for (const el of document.querySelectorAll(OVERLAY_SEL)) {
+      if (inUI(el) || !vis(el)) continue;
+      const r = el.getBoundingClientRect();
+      if (r.height < 12 || r.width < 30) continue;
+      // قائمة منبثقة فقط (فوق الصفحة)، لا قوائم ثابتة في الصفحة نفسها
+      let floating = false;
+      for (let n = el, i = 0; n && i < 8; n = n.parentElement, i++) {
+        const pos = getComputedStyle(n).position;
+        if (pos === 'fixed' || pos === 'absolute') { floating = true; break; }
+      }
+      if (!floating) continue;
+      if (out.some(x => x.contains(el))) continue;
+      for (let i = out.length - 1; i >= 0; i--) if (el.contains(out[i])) out.splice(i, 1);
+      out.push(el);
+    }
+    return out;
   }
 
   // ننتظر ظهور القائمة الحقيقية ثم نختار الخيار المطلوب
@@ -878,6 +920,21 @@
       if (!(below || above)) continue;
       if (!(r.right > a.left - 20 && r.left < a.right + 20)) continue;
       out.push({ el: e, k, top: r.top });
+    }
+    // (v7.6.2) احتياط للهاتف: الحروف داخل القائمة المفتوحة أينما ظهرت
+    if (!out.length) {
+      for (const box of openOverlays()) {
+        for (const e of box.querySelectorAll('*')) {
+          if (inUI(e) || !vis(e)) continue;
+          const t = clean(ownText(e)) || (e.children.length === 0 ? clean(e.textContent) : '');
+          if (!t || t.length > 3) continue;
+          const k = secNorm(t);
+          if (!isArLetter(k)) continue;
+          const r = e.getBoundingClientRect();
+          if (r.height < 6) continue;
+          out.push({ el: e, k, top: r.top });
+        }
+      }
     }
     out.sort((x, y) => x.top - y.top);
     return out.filter(o => !out.some(x => x !== o && o.el.contains(x.el) && x.k === o.k));
