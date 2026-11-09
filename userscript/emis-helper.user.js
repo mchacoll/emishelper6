@@ -1,7 +1,7 @@
 // ==UserScript==
-// @name         مساعد EMIS – تعبئة تلقائية (v7.7.3)
+// @name         مساعد EMIS – تعبئة تلقائية (v7.7.4)
 // @namespace    emis-helper
-// @version      7.7.3
+// @version      7.7.4
 // @description  تعبئة تلقائية لـ EMIS + حفظ + «تمت المراجعة» + فتح «جديد» + نقل «الاحتياجات الخاصة» من EMIS إلى موقعك
 // @match        *://*/*
 // @grant        GM_setValue
@@ -315,7 +315,7 @@
     ui.dir = 'rtl';
 
     const head = mk('div', 'display:flex;justify-content:space-between;align-items:center;gap:8px');
-    head.appendChild(mk('b', 'font-size:13.5px;', title + ' v7.7.3'));
+    head.appendChild(mk('b', 'font-size:13.5px;', title + ' v7.7.4'));
     const minBtn = mk('button',
       'background:none;border:0;color:#fff;font-size:22px;' +
       'min-width:32px;min-height:32px;cursor:pointer;padding:0;line-height:1;', '−');
@@ -2632,7 +2632,8 @@
     let newDiag = '';
     async function openNewForm(log) {
       newDiag = '';
-      const formReady = () => !!findControl(['اسم الأب']);
+      // (v7.7.4) نموذج جديد = حقل «اسم الأب» موجود وفارغ (لا نعبّئ فوق طالب محفوظ)
+      const formReady = () => { const c = findControl(['اسم الأب']); return !!c && !clean(c.value || ''); };
       await sleep(700);   // انتظار انتهاء الحفظ
       if (formReady()) {
         // ربما ما زال الحفظ يُغلق النموذج: ننتظر قليلاً، فإن بقي مفتوحاً نعتبره نموذجاً جاهزاً
@@ -2642,7 +2643,21 @@
       }
 
       let btn = null;
-      const found = await waitUntil(() => { btn = findNewButton(); return !!btn; }, 12000, 300);
+      // (v7.7.4) زر «+ جديد» الأزرق الغامق في قائمة الطلاب (بحث مباشر أولاً)
+      const simpleNew = () => [...document.querySelectorAll('button,a,[role=button],.q-btn')]
+        .find(b => !inUI(b) && shown(b) && arOnly(b.textContent || '') === norm('جديد')) || null;
+      const anyNew = () => simpleNew() || findNewButton();
+      let found = await waitUntil(() => { btn = anyNew(); return !!btn; }, 5000, 200);
+      // بعد الحفظ قد تبقى صفحة الطالب مفتوحة: نضغط «الرجوع» إلى القائمة ثم نبحث عن «جديد»
+      if (!found) {
+        const back = [...document.querySelectorAll('button,a,[role=button],.q-btn')]
+          .find(b => !inUI(b) && shown(b) && arOnly(b.textContent || '') === norm('الرجوع'));
+        if (back) {
+          log('↩ الرجوع إلى قائمة الطلاب...');
+          press(back);
+          found = await waitUntil(() => { btn = anyNew(); return !!btn; }, 8000, 200);
+        }
+      }
       if (!found || !btn) {
         newDiag = describeButtons();
         log('⚠️ لم أجد زر «جديد»');

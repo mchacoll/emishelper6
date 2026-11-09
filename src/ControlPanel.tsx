@@ -248,7 +248,7 @@ export function ControlPanel(props: {
           <Button
             kind="gold"
             icon="play"
-            label={pending ? `تسجيل الكل (${pending})` : 'تسجيل الكل'}
+            label={pending ? `ابدأ (${pending})` : 'ابدأ'}
             onPress={props.onRun}
             compact
             style={{ flex: 1.6 }}

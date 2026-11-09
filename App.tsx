@@ -364,18 +364,39 @@ function Main() {
     currentKey.current = null;
     setPhase('saved');
     setDetail('');
-    if (runningRef.current) setTimeout(nextStudent, 700);
+    if (settingsRef.current.autoPilot && runningRef.current) {
+      // 🤖 الإضافة التلقائية: نكمل مباشرة
+      setTimeout(nextStudent, 700);
+      return;
+    }
+    // بعد حفظ كل طالب نتوقف، ونفتح «جديد» في EMIS ليكون جاهزاً عندما تضغط «ابدأ»
+    stopQueue();
+    setTimeout(openNextNew, 1500);
+  };
+
+  const openNextNew = () => {
+    if (runningRef.current) return;
+    gmSet(K_STATUS, '', 'emis');
+    gmSet(K_CMD, JSON.stringify({ mode: 'newOnly', t: Date.now() }), 'emis');
+    setDetail('حُفظ الطالب ✔ · فتح «جديد» للطالب التالي...');
   };
 
   const onEmisStatus = (raw: string) => {
-    if (!currentKey.current) return;
     let st: { info?: string; stopped?: boolean; saved?: boolean; ok?: number; miss?: string[] };
     try {
       st = JSON.parse(raw);
     } catch {
       return;
     }
-    if (st.info) return;
+    if (st.info) {
+      // نتيجة فتح «جديد» بعد الحفظ
+      if (!currentKey.current) {
+        const next = queueRef.current.find(i => i.status === 'pending');
+        setDetail(st.info.replace(/ — اضغط «ابدأ» لتعبئة الطالب/, '') + (next ? ` · اضغط «ابدأ» للطالب التالي: ${nameOf(next)}` : ' · انتهت القائمة'));
+      }
+      return;
+    }
+    if (!currentKey.current) return;
     lastActivity.current = Date.now();
     if (st.saved && !(st.miss && st.miss.length)) {
       finishCurrent(`${st.ok || 0} حقل · ${hhmm()}`);
