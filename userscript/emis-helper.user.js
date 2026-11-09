@@ -1,7 +1,7 @@
 // ==UserScript==
-// @name         مساعد EMIS – تعبئة تلقائية (v7.6.4)
+// @name         مساعد EMIS – تعبئة تلقائية (v7.7.0)
 // @namespace    emis-helper
-// @version      7.6.4
+// @version      7.7.0
 // @description  تعبئة تلقائية لـ EMIS + حفظ + «تمت المراجعة» + فتح «جديد» + نقل «الاحتياجات الخاصة» من EMIS إلى موقعك
 // @match        *://*/*
 // @grant        GM_setValue
@@ -22,7 +22,7 @@
   const DATE_FORMAT = 'YYYY-MM-DD';
   const IS_TOUCH = (() => { try { return matchMedia('(pointer:coarse)').matches; } catch { return false; } })();
   // السرعة: ارفع الأرقام لتصبح أبطأ (بالميلي ثانية)
-  const DELAY = IS_TOUCH ? 70 : 50;      // الانتظار بين كل حقل والذي يليه (v7.6.4: أسرع)
+  const DELAY = IS_TOUCH ? 70 : 50;      // الانتظار بين كل حقل والذي يليه (v7.7.0: أسرع)
   const TYPE_DELAY = 4;                   // الانتظار بين كل حرف وآخر أثناء الكتابة
 
   // false = القوائم تُختار بالضغط فقط ولا يُكتب فيها نص أبداً
@@ -315,7 +315,7 @@
     ui.dir = 'rtl';
 
     const head = mk('div', 'display:flex;justify-content:space-between;align-items:center;gap:8px');
-    head.appendChild(mk('b', 'font-size:13.5px;', title + ' v7.6.4'));
+    head.appendChild(mk('b', 'font-size:13.5px;', title + ' v7.7.0'));
     const minBtn = mk('button',
       'background:none;border:0;color:#fff;font-size:22px;' +
       'min-width:32px;min-height:32px;cursor:pointer;padding:0;line-height:1;', '−');
@@ -697,7 +697,7 @@
     const rows = [];
     for (const el of document.querySelectorAll(OPT2)) {
       if (inUI(el) || !vis(el) || el.children.length >= 4) continue;
-      // (v7.6.4) ليست خيارات: حقول الاستمارة المجاورة وعناوينها
+      // (v7.7.0) ليست خيارات: حقول الاستمارة المجاورة وعناوينها
       if (el.closest('.q-field,label,mat-form-field') || el.querySelector('input,select,textarea')) continue;
       const text = clean(el.textContent);
       if (!text || text.length > 60) continue;
@@ -709,7 +709,7 @@
       if (!overlapX || !(below || above)) continue;
       rows.push({ el, text, d: Math.min(Math.abs(o.top - a.bottom), Math.abs(a.top - o.bottom)) });
     }
-    // (v7.6.4) على الهاتف قد تُفتح القائمة بعيداً عن الحقل (نافذة أعلى الصفحة أو وسطها).
+    // (v7.7.0) على الهاتف قد تُفتح القائمة بعيداً عن الحقل (نافذة أعلى الصفحة أو وسطها).
     // إن كانت هناك قائمة منسدلة مفتوحة نأخذ خياراتها هي أولاً، لا نصوص الحقول المجاورة
     const near = rows.splice(0);
     {
@@ -730,7 +730,7 @@
       .sort((x, y) => x.d - y.d);
   }
 
-  // (v7.6.4) القوائم المنسدلة المفتوحة حالياً (PrimeVue / PrimeNG / Material / Vuetify / Element ...)
+  // (v7.7.0) القوائم المنسدلة المفتوحة حالياً (PrimeVue / PrimeNG / Material / Vuetify / Element ...)
   const OVERLAY_SEL = '[role=listbox],.q-menu,.q-dialog__inner,.q-select__dialog,.q-virtual-scroll__content,.p-select-overlay,.p-dropdown-panel,.p-multiselect-overlay,.p-multiselect-panel,' +
     '.p-autocomplete-overlay,.p-autocomplete-panel,.p-overlay,.p-connected-overlay,.cdk-overlay-pane,.mat-mdc-select-panel,' +
     '.ng-dropdown-panel,.select2-dropdown,.v-overlay__content,.v-menu,.el-select-dropdown,.el-popper,' +
@@ -822,12 +822,12 @@
     return false;
   }
 
-  // (v7.6.4) ما نكتبه في قائمة البحث: النص كاملاً، ثم أطول كلمة فيه (لو اختلفت الكتابة قليلاً في EMIS)
+  // (v7.7.0) ما نكتبه في قائمة البحث: النص كاملاً، ثم أطول كلمة فيه (لو اختلفت الكتابة قليلاً في EMIS)
   function typeWords(c) {
     const src = typeof c === 'string' ? c : (c && (c.typeHint || c.label)) || '';
     const s = clean(String(src));
     if (!s) return [];
-    // (v7.6.4) الكلمة المميزة أولاً (تتحمل اختلاف الكتابة)، ثم النص كاملاً، ثم بدون همزة/«ال»
+    // (v7.7.0) الكلمة المميزة أولاً (تتحمل اختلاف الكتابة)، ثم النص كاملاً، ثم بدون همزة/«ال»
     const words = s.split(/[\s/،,\-]+/).filter(w => w.length >= 3).sort((a, b) => b.length - a.length);
     const out = [];
     if (words[0]) out.push(words[0]);
@@ -843,7 +843,7 @@
     let anchor = ctrl.closest(WRAP_SEL) || ctrl;
     if (anchor.getBoundingClientRect().height > 120) anchor = ctrl;
     // (v7.6) الحقول التي تحمل typeSearch (مثل الجنسية) تكتب النص ثم تضغط على النتيجة
-    // (v7.6.4) قوائم البحث (مثل قوائم EMIS: حقل كتابة role=combobox) لا تفتح بالضغط: نكتب ثم نضغط دائماً
+    // (v7.7.0) قوائم البحث (مثل قوائم EMIS: حقل كتابة role=combobox) لا تفتح بالضغط: نكتب ثم نضغط دائماً
     const searchy = isTextInput(ctrl) && !ctrl.readOnly &&
       (ctrl.getAttribute('aria-autocomplete') === 'list' || ctrl.type === 'search' || /q-field__input|q-select/.test(String(ctrl.className)));
     const canType = (ALLOW_TYPE_IN_LISTS || flags.typeSearch || searchy) && isTextInput(ctrl) && !ctrl.readOnly;
@@ -860,7 +860,7 @@
           press(ctrl);
           await sleep(searchy ? 80 : 250);
           await typeInto(ctrl, w, true);
-          // (v7.6.4) أول مرة قد تجلب EMIS الخيارات من الخادم: ننتظر حتى 4 ثوانٍ (ونكمل فور ظهورها)
+          // (v7.7.0) أول مرة قد تجلب EMIS الخيارات من الخادم: ننتظر حتى 4 ثوانٍ (ونكمل فور ظهورها)
           const { opts, best } = await readAndPick(anchor, [c], first ? 50 : 25, 80);
           first = false;
           if (best && await commitOption(best, ctrl, anchor, opts.length === 1)) {
@@ -875,7 +875,7 @@
     }
 
     const arrow = anchor.querySelector('[class*=arrow],[class*=trigger],[class*=chevron],svg');
-    // (v7.6.4) قوائم البحث لا تفتح بالضغط: لا نضيّع الوقت في محاولات الضغط
+    // (v7.7.0) قوائم البحث لا تفتح بالضغط: لا نضيّع الوقت في محاولات الضغط
     const triggers = searchy ? [] : [ctrl, anchor, arrow].filter((x, i, a) => x && a.indexOf(x) === i);
 
     for (const trig of triggers) {
@@ -946,7 +946,7 @@
       if (!(r.right > a.left - 20 && r.left < a.right + 20)) continue;
       out.push({ el: e, k, top: r.top });
     }
-    // (v7.6.4) احتياط للهاتف: الحروف داخل القائمة المفتوحة أينما ظهرت
+    // (v7.7.0) احتياط للهاتف: الحروف داخل القائمة المفتوحة أينما ظهرت
     if (!out.length) {
       for (const box of openOverlays()) {
         for (const e of box.querySelectorAll('*')) {
@@ -1016,7 +1016,7 @@
     };
     const done = how => { lastChosen = s + (how ? ' (' + how + ')' : ''); return true; };
 
-    // (v7.6.4) قائمة بحث (EMIS): الضغط لا يفتحها، ننتقل مباشرة للكتابة ثم الضغط (آخر الدالة)
+    // (v7.7.0) قائمة بحث (EMIS): الضغط لا يفتحها، ننتقل مباشرة للكتابة ثم الضغط (آخر الدالة)
     const searchy = isTextInput(ctrl) && !ctrl.readOnly &&
       (ctrl.getAttribute('aria-autocomplete') === 'list' || ctrl.type === 'search' || /q-field__input|q-select/.test(String(ctrl.className)));
     for (let round = 0; round < (searchy ? 0 : 2); round++) {
@@ -1238,7 +1238,7 @@
     await sleep(200);
     await closeLists();
 
-    // (v7.6.4) قوائم البحث (EMIS) لا تفتح بالضغط: نذهب مباشرة إلى الكتابة ثم الضغط
+    // (v7.7.0) قوائم البحث (EMIS) لا تفتح بالضغط: نذهب مباشرة إلى الكتابة ثم الضغط
     const searchy = isTextInput(ctrl) && !ctrl.readOnly &&
       (ctrl.getAttribute('aria-autocomplete') === 'list' || ctrl.type === 'search' || /q-field__input|q-select/.test(String(ctrl.className)));
 
@@ -2321,6 +2321,76 @@
         }
       } finally { nextBusy = false; }
     }
+
+    /* ---------- (v7.7) مزامنة كل الطلاب غير المراجَعين دفعة واحدة ---------- */
+    const K_QUEUE = 'emis_queue_v1', K_SYNC = 'emis_sync_v1', K_MARK = 'emis_mark_v1';
+    let syncBusy = false;
+    // يفتح كل طالب في القائمة (ليس عليه «تمت المراجعة») ويقرأ معلوماته كاملة
+    async function syncAll() {
+      if (syncBusy) return;
+      syncBusy = true;
+      stopRequested = false;
+      const prog = o => gmSet(K_SYNC, JSON.stringify({ ...o, t: Date.now() }));
+      try {
+        const total = findStudentRows().length;
+        if (!total) {
+          prog({ running: false, error: 'لم أجد قائمة الطلاب (أزرار «مساعد EMIS») في موقعك. افتح صفحة قائمة الطلاب.' });
+          return;
+        }
+        const items = [], seen = new Set();
+        let reviewed = 0;
+        for (let i = 0; i < total; i++) {
+          checkStop();
+          const r = findStudentRows()[i];
+          if (!r) break;
+          if (isReviewedRow(r.row)) { reviewed++; prog({ running: true, done: i + 1, total, found: items.length, reviewed }); continue; }
+          const prev = (getCurrent() || {}).k;
+          press(r.btn);
+          await waitUntil(() => { const c = getCurrent(); return c && c.k !== prev; }, 5000, 120);
+          await sleep(250);
+          const c = getCurrent();
+          if (c) {
+            c.d.reviewed = isReviewedNow();
+            if (c.d.reviewed) reviewed++;
+            else if (!seen.has(c.k)) { seen.add(c.k); items.push({ k: c.k, d: c.d }); }
+          }
+          prog({ running: true, done: i + 1, total, found: items.length, reviewed });
+        }
+        gmSet(K_QUEUE, JSON.stringify({ items, reviewed, total, t: Date.now() }));
+        prog({ running: false, done: total, total, found: items.length, reviewed });
+      } catch (e) {
+        prog({ running: false, error: e && e.isStop ? 'أُوقفت المزامنة' : 'خطأ: ' + (e && e.message ? e.message : e) });
+      } finally { syncBusy = false; }
+    }
+
+    // تحديد «تمت المراجعة» لطالب معيّن (بعد تسجيله في EMIS) — يعمل في الخلفية
+    async function markByKey(k) {
+      const res = r => gmSet(K_MARK, JSON.stringify({ k, res: r, t: Date.now() }));
+      try {
+        const row = findStudentRows().find(r => norm(r.row.textContent).includes(k));
+        if (row && isReviewedRow(row.row)) return res('already');
+        let cur = getCurrent();
+        if (!cur || cur.k !== k) {
+          if (!row) return res('norow');
+          press(row.btn);
+          await waitUntil(() => { const c = getCurrent(); return c && c.k === k; }, 5000, 120);
+          await sleep(250);
+          cur = getCurrent();
+          if (!cur || cur.k !== k) return res('notopened');
+        }
+        if (isReviewedNow()) return res('already');
+        const btn = findReviewBtn();
+        if (!btn || isOff(btn)) return res('nobtn');
+        press(btn);
+        const ok = await waitUntil(() => {
+          const r2 = findStudentRows().find(r => norm(r.row.textContent).includes(k));
+          return (r2 && isReviewedRow(r2.row)) || (getCurrent() || {}).k !== k || isReviewedNow();
+        }, 5000, 150);
+        return res(ok ? 'ok' : 'unknown');
+      } catch (e) { return res('error'); }
+    }
+    window.__emisSync = () => { syncAll(); };
+    window.__emisMark = k => { markByKey(k); };
 
     bar = createBar('مساعد EMIS',
       api => {

@@ -18,7 +18,7 @@ import {
   remoteSetJs,
   syncAndBootJs,
 } from './src/bridge';
-import { type AutoPilotInfo, ControlPanel, type Phase, type Student } from './src/ControlPanel';
+import { ControlPanel, type Phase, type QItem } from './src/ControlPanel';
 import { Onboarding } from './src/Onboarding';
 import { DEFAULT_SETTINGS, normUrl, type Settings } from './src/settings';
 import { type LogLine, SettingsScreen } from './src/SettingsScreen';
@@ -27,22 +27,22 @@ import { Icon, IconButton, type IconName, T } from './src/ui';
 
 type Pane = 'site' | 'emis';
 
+const APP_VERSION = '7.7.0';
 const K_SETTINGS = 'app_settings_v1';
 const K_STORE = 'gm_store_v1';
+const K_QUEUE_APP = 'app_queue_v1'; // قائمة التسجيل في التطبيق
+const K_DONE_APP = 'app_done_keys_v1'; // الطلاب الذين سُجّلوا في EMIS (لمنع التكرار)
 // مفاتيح السكربت
 const K_DATA = 'emis_student_v2';
 const K_CMD = 'emis_cmd_v2';
 const K_STATUS = 'emis_status_v2';
-const K_AUTO_REVIEW = 'emis_auto_review';
-const K_CHAIN = 'emis_chain_new_v3';
+const K_QUEUE = 'emis_queue_v1';
+const K_SYNC = 'emis_sync_v1';
+const K_MARK = 'emis_mark_v1';
 const DESKTOP_WIDTH = 1280;
 // متصفح كمبيوتر: EMIS يفتح القوائم المنسدلة تحت الحقل بدل نافذة ملء الشاشة الخاصة بالهاتف
 const DESKTOP_UA =
   'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/138.0.0.0 Safari/537.36';
-
-// نصوص أزرار شريط السكربت (نضغطها من لوحة التطبيق)
-const BAR = { fill: 'ابدأ', page2: 'ص2', stop: 'إيقاف', done: 'تمت المراجعة', skip: 'التالي' } as const;
-type Action = keyof typeof BAR;
 
 const toast = (t: string) => {
   try {
@@ -51,22 +51,8 @@ const toast = (t: string) => {
     /* ignore */
   }
 };
-
-const keyOf = (d: Student | null) => (d ? [d.name, d.father, d.grandfather].map(x => (x || '').replace(/\s+/g, '')).join('|') : '');
 const hhmm = () => new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-
-/* الإضافة التلقائية: مراحل الدورة الواحدة */
-type Stage = 'none' | 'reloading' | 'opening' | 'running';
-
-const parseStudent = (raw: unknown): Student | null => {
-  if (typeof raw !== 'string' || !raw) return null;
-  try {
-    const d = JSON.parse(raw);
-    return d && d.name ? d : null;
-  } catch {
-    return null;
-  }
-};
+const nameOf = (i?: QItem | null) => (i ? [i.d.name, i.d.father, i.d.grandfather].filter(Boolean).join(' ') : '');
 
 export default function App() {
   return (
@@ -89,11 +75,24 @@ function Main() {
   const [errors, setErrors] = useState<LogLine[]>([]);
   const [reloadKey, setReloadKey] = useState({ site: 0, emis: 0 });
   const [loading, setLoading] = useState<Record<Pane, boolean>>({ site: true, emis: true });
+  const [barLog, setBarLog] = useState<Record<Pane, string>>({ site: '', emis: '' });
 
-  const [student, setStudent] = useState<Student | null>(null);
   const [phase, setPhase] = useState<Phase>('idle');
   const [detail, setDetail] = useState('');
-  const [barLog, setBarLog] = useState<Record<Pane, string>>({ site: '', emis: '' });
+  const [syncText, setSyncText] = useState('');
+  const [apNote, setApNote] = useState('');
+
+  // قائمة التسجيل
+  const [queue, setQueueState] = useState<QItem[]>([]);
+  const queueRef = useRef<QItem[]>([]);
+  const doneKeys = useRef(new Set<string>());
+  const [running, setRunningState] = useState(false);
+  const runningRef = useRef(false);
+  const currentKey = useRef<string | null>(null);
+  const syncingRef = useRef(false);
+  const syncAfterReload = useRef(false);
+  const runAfterSync = useRef(false);
+  const lastActivity = useRef(0);
 
   // مخزن GM_* المشترك بين النافذتين
   const store = useRef<Record<string, unknown>>({});
@@ -107,37 +106,44 @@ function Main() {
   const settingsRef = useRef(settings);
   settingsRef.current = settings;
 
-  /* ---------- الإضافة التلقائية ---------- */
-  const [apPaused, setApPaused] = useState(false);
-  const [apNote, setApNote] = useState('');
-  const [apCount, setApCount] = useState(0);
-  const apPausedRef = useRef(false);
-  apPausedRef.current = apPaused;
-  const cycle = useRef<{ stage: Stage; t: number }>({ stage: 'none', t: 0 });
-  const processed = useRef(new Set<string>());
-  const lastActivity = useRef(0);
-  const phaseRef = useRef<Phase>('idle');
-  phaseRef.current = phase;
-  const apRunning = () => settingsRef.current.autoPilot && !apPausedRef.current;
-
-  const pauseAutoPilot = (reason: string) => {
-    cycle.current = { stage: 'none', t: 0 };
-    setApPaused(true);
-    apPausedRef.current = true;
-    setApNote(reason);
-    toast('توقفت الإضافة التلقائية: ' + reason);
+  /* ---------- الحفظ ---------- */
+  const setQueue = (fn: (q: QItem[]) => QItem[]) => {
+    const next = fn(queueRef.current);
+    queueRef.current = next;
+    setQueueState(next);
+    AsyncStorage.setItem(K_QUEUE_APP, JSON.stringify(next)).catch(() => {});
+  };
+  const updateItem = (k: string, patch: Partial<QItem>) =>
+    setQueue(q => q.map(i => (i.k === k ? { ...i, ...patch, t: Date.now() } : i)));
+  const addDone = (k: string) => {
+    doneKeys.current.add(k);
+    AsyncStorage.setItem(K_DONE_APP, JSON.stringify([...doneKeys.current].slice(-5000))).catch(() => {});
+  };
+  const setRunning = (v: boolean) => {
+    runningRef.current = v;
+    setRunningState(v);
   };
 
-  /* ---------- تحميل الإعدادات والقيم المحفوظة ---------- */
   useEffect(() => {
     (async () => {
       try {
-        const [s, st] = await Promise.all([AsyncStorage.getItem(K_SETTINGS), AsyncStorage.getItem(K_STORE)]);
+        const [s, st, q, dk] = await Promise.all([
+          AsyncStorage.getItem(K_SETTINGS),
+          AsyncStorage.getItem(K_STORE),
+          AsyncStorage.getItem(K_QUEUE_APP),
+          AsyncStorage.getItem(K_DONE_APP),
+        ]);
         const loaded: Settings = s ? { ...DEFAULT_SETTINGS, ...JSON.parse(s) } : DEFAULT_SETTINGS;
         setSettings(loaded);
         if (!loaded.onboarded) setShowGuide(true);
         if (st) store.current = JSON.parse(st) || {};
-        setStudent(parseStudent(store.current[K_DATA]));
+        if (q) {
+          // ما كان «يُسجَّل» عند إغلاق التطبيق يعود لـ«بانتظار التسجيل»
+          const items: QItem[] = (JSON.parse(q) || []).map((i: QItem) => (i.status === 'working' ? { ...i, status: 'pending' } : i));
+          queueRef.current = items;
+          setQueueState(items);
+        }
+        if (dk) doneKeys.current = new Set(JSON.parse(dk) || []);
       } catch {
         /* ignore */
       }
@@ -168,120 +174,252 @@ function Main() {
     setErrors(prev => [...prev.slice(-199), { t: Date.now(), pane, level, msg }]);
   }, []);
 
-  /** إرسال أمر للسكربت في EMIS (نفس ما يرسله موقع الطلاب) */
-  const sendCmd = (mode: 'new' | 'both') => {
-    const v = JSON.stringify({ mode, t: Date.now() });
-    store.current[K_STATUS] = '';
-    store.current[K_CMD] = v;
+  /** كتابة قيمة في مخزن السكربت وإيصالها لإحدى الشاشتين */
+  const gmSet = (k: string, v: unknown, to: Pane) => {
+    store.current[k] = v;
     persistStore();
-    emisRef.current?.injectJavaScript(remoteSetJs(K_STATUS, ''));
-    emisRef.current?.injectJavaScript(remoteSetJs(K_CMD, v));
+    views[to].current?.injectJavaScript(remoteSetJs(k, v));
+  };
+
+  /* ===================== المزامنة ===================== */
+  const startSync = (reloadFirst: boolean) => {
+    if (syncingRef.current) return;
+    syncingRef.current = true;
+    setPhase('syncing');
+    setDetail('');
+    setSyncText('قراءة الطلاب من موقعك...');
+    lastActivity.current = Date.now();
+    if (reloadFirst) {
+      // تحديث موقع الطلاب أولاً لجلب الاستمارات الجديدة، ثم المزامنة عند جاهزيته
+      syncAfterReload.current = true;
+      setReloadKey(k => ({ ...k, site: k.site + 1 }));
+      setTimeout(() => {
+        if (syncAfterReload.current) {
+          syncAfterReload.current = false;
+          syncFailed('لم يجهز موقع الطلاب بعد التحديث');
+        }
+      }, 45000);
+    } else {
+      injectSync();
+    }
+  };
+  const injectSync = () => {
+    siteRef.current?.injectJavaScript(
+      '(function(){var ok=!!window.__emisSync;if(ok)window.__emisSync();' +
+        'try{window.ReactNativeWebView.postMessage(JSON.stringify({__gm:"act",action:"sync:site",ok:ok}))}catch(e){}})();true;',
+    );
+  };
+  const syncFailed = (why: string) => {
+    syncingRef.current = false;
+    runAfterSync.current = false;
+    setPhase('idle');
+    setSyncText('');
+    setDetail(why);
+    lastActivity.current = Date.now();
+  };
+
+  /** دمج نتيجة المزامنة مع قائمة التسجيل */
+  const mergeSync = (raw: string) => {
+    let res: { items: { k: string; d: QItem['d'] }[]; reviewed: number; total: number };
+    try {
+      res = JSON.parse(raw);
+    } catch {
+      return;
+    }
+    const fresh = res.items || [];
+    const keys = new Set(fresh.map(i => i.k));
+    let added = 0;
+    setQueue(q => {
+      // نُبقي المنتهين للعرض، ونحذف «بانتظار التسجيل» الذين لم يعودوا غير مراجَعين في موقعك
+      const kept = q.filter(i => i.status === 'done' || i.status === 'skipped' || keys.has(i.k));
+      const byKey = new Map(kept.map(i => [i.k, i]));
+      for (const f of fresh) {
+        const ex = byKey.get(f.k);
+        if (doneKeys.current.has(f.k)) {
+          // سُجّل سابقاً في EMIS لكن لم يُحدَّد «تمت المراجعة» في موقعك: نحدده الآن ولا نسجّله مرة أخرى
+          siteRef.current?.injectJavaScript(`window.__emisMark&&window.__emisMark(${JSON.stringify(f.k)});true;`);
+          if (!ex) kept.push({ k: f.k, d: f.d, status: 'done', note: 'سُجّل سابقاً', t: Date.now() });
+          continue;
+        }
+        if (ex) {
+          ex.d = f.d;
+          if (ex.status === 'skipped') ex.status = 'pending';
+        } else {
+          kept.push({ k: f.k, d: f.d, status: 'pending', t: Date.now() });
+          added++;
+        }
+      }
+      return [...kept];
+    });
+    const pending = queueRef.current.filter(i => i.status === 'pending').length;
+    syncingRef.current = false;
+    setSyncText('');
+    setPhase('idle');
+    setDetail('');
+    lastActivity.current = Date.now();
+    const msg = `المزامنة: ${pending} للتسجيل${added ? ` (${added} جديد)` : ''} · ${res.reviewed || 0} عليها «تمت المراجعة» · ${hhmm()}`;
+    setApNote(msg);
+    toast(msg);
+    if ((runAfterSync.current || settingsRef.current.autoPilot) && pending) {
+      runAfterSync.current = false;
+      startQueue();
+    }
+    runAfterSync.current = false;
+  };
+
+  /* ===================== التسجيل ===================== */
+  const startQueue = () => {
+    if (runningRef.current) return;
+    setRunning(true);
+    activateKeepAwakeAsync('queue').catch(() => {});
+    nextStudent();
+  };
+
+  const stopQueue = (why?: string) => {
+    setRunning(false);
+    deactivateKeepAwake('queue').catch(() => {});
+    if (why) setDetail(why);
+    lastActivity.current = Date.now();
+  };
+
+  const nextStudent = () => {
+    if (!runningRef.current) return;
+    const item = queueRef.current.find(i => i.status === 'pending');
+    if (!item) {
+      currentKey.current = null;
+      const done = queueRef.current.filter(i => i.status === 'done').length;
+      stopQueue();
+      setPhase('finished');
+      setDetail(`انتهى التسجيل · ${done} طالب سُجّل في EMIS`);
+      if (settingsRef.current.autoSwitch && !settingsRef.current.split) setActive('emis');
+      return;
+    }
+    currentKey.current = item.k;
+    updateItem(item.k, { status: 'working', note: '' });
+    // بيانات الطالب للسكربت في EMIS ثم أمر «جديد + تعبئة + حفظ»
+    gmSet(K_DATA, JSON.stringify({ ...item.d, reviewed: false }), 'emis');
+    gmSet(K_STATUS, '', 'emis');
+    gmSet(K_CMD, JSON.stringify({ mode: 'new', t: Date.now() }), 'emis');
     setPhase('filling');
     setDetail('');
+    lastActivity.current = Date.now();
     if (settingsRef.current.autoSwitch && !settingsRef.current.split) setActive('emis');
   };
 
-  /** بداية دورة: تحديث موقع الطلاب ثم فتح أول طالب غير مراجَع */
-  const startCycle = () => {
-    cycle.current = { stage: 'reloading', t: Date.now() };
-    lastActivity.current = Date.now();
-    setPhase('checking');
-    setDetail('فحص موقع الطلاب بحثاً عن استمارات جديدة...');
-    if (settingsRef.current.autoSwitch && !settingsRef.current.split) setActive('site');
-    setReloadKey(k => ({ ...k, site: k.site + 1 }));
-  };
-
-  const endCycleIdle = (note: string) => {
-    cycle.current = { stage: 'none', t: 0 };
-    lastActivity.current = Date.now();
-    setApNote(note);
-    setPhase('idle');
+  /** الطالب الحالي سُجّل في EMIS: نحدده «تمت المراجعة» في موقعك (في الخلفية) ثم التالي */
+  const finishCurrent = (note: string) => {
+    const k = currentKey.current;
+    if (!k) return;
+    addDone(k);
+    updateItem(k, { status: 'done', note });
+    siteRef.current?.injectJavaScript(`window.__emisMark&&window.__emisMark(${JSON.stringify(k)});true;`);
+    currentKey.current = null;
+    setPhase('saved');
     setDetail('');
+    if (runningRef.current) setTimeout(nextStudent, 700);
   };
 
-  // نتيجة «التالي» في موقع الطلاب أثناء الدورة
-  const onSiteBarDuringCycle = (log: string) => {
-    const c = cycle.current;
-    if (c.stage === 'reloading') {
-      const wait = 1500 - (Date.now() - c.t);
-      if (wait > 0) {
-        setTimeout(() => onSiteBarDuringCycle(log), wait);
-        return;
-      }
-      cycle.current = { stage: 'opening', t: Date.now() };
-      runAction('skip', 'site');
+  const onEmisStatus = (raw: string) => {
+    if (!currentKey.current) return;
+    let st: { info?: string; stopped?: boolean; saved?: boolean; ok?: number; miss?: string[] };
+    try {
+      st = JSON.parse(raw);
+    } catch {
       return;
     }
-    if (c.stage !== 'opening') return;
-    const t = log.trim();
-    if (t.startsWith('⚠️') || t.startsWith('❌')) {
-      endCycleIdle(`لا توجد استمارات جديدة · آخر فحص ${hhmm()}`);
+    if (st.info) return;
+    lastActivity.current = Date.now();
+    if (st.saved && !(st.miss && st.miss.length)) {
+      finishCurrent(`${st.ok || 0} حقل · ${hhmm()}`);
       return;
     }
-    if (!t.startsWith('✔')) return;
-    const d = parseStudent(store.current[K_DATA]);
-    if (!d || d.reviewed) {
-      endCycleIdle(`لا توجد استمارات جديدة · آخر فحص ${hhmm()}`);
-      return;
-    }
-    if (processed.current.has(keyOf(d))) {
-      pauseAutoPilot(`الطالب ${d.name} ${d.father || ''} أُضيف سابقاً ولم يُحدَّد «تمت المراجعة» — تحقق منه`);
-      return;
-    }
-    cycle.current = { stage: 'running', t: Date.now() };
-    setApNote(`جارٍ إضافة: ${d.name} ${d.father || ''}`);
-    sendCmd('new');
+    const why = st.stopped ? (st.miss && st.miss[0]) || 'تم الإيقاف' : 'ناقص: ' + (st.miss || []).join('، ');
+    updateItem(currentKey.current, { status: 'failed', note: why });
+    setPhase(st.stopped ? 'stopped' : 'incomplete');
+    setDetail(why + ' — أكمله في EMIS واحفظه ثم اضغط «حفظته ⏭»، أو «تخطي»');
+    stopQueue();
+    toast('توقف التسجيل: ' + why);
   };
 
-  /* ---------- ضغط أزرار السكربت من اللوحة ---------- */
-  const runAction = useCallback((action: Action, pane: Pane) => {
-    views[pane].current?.injectJavaScript(clickBarJs(`${action}:${pane}`, BAR[action]));
+  /* ---------- أزرار اللوحة ---------- */
+  const onStop = () => {
+    runAfterSync.current = false;
+    if (syncingRef.current) {
+      siteRef.current?.injectJavaScript(clickBarJs('stop:site', 'إيقاف'));
+      syncFailed('أوقفت المزامنة');
+    }
+    views.emis.current?.injectJavaScript(clickBarJs('stop:emis', 'إيقاف'));
+    stopQueue('أوقفته يدوياً');
+  };
+  const onDoneManual = () => {
+    // أكملتَ الطالب وحفظته بنفسك في EMIS
+    if (!currentKey.current) return;
+    setRunning(true);
+    activateKeepAwakeAsync('queue').catch(() => {});
+    finishCurrent('أُكمل يدوياً');
+  };
+  const onSkip = () => {
+    const k = currentKey.current;
+    if (k) {
+      updateItem(k, { status: 'skipped', note: 'تخطيته' });
+      currentKey.current = null;
+    }
+    if (runningRef.current) {
+      views.emis.current?.injectJavaScript(clickBarJs('stop:emis', 'إيقاف'));
+      setTimeout(nextStudent, 1200);
+    } else {
+      setPhase('idle');
+      setDetail('');
+    }
+  };
+  const onRetry = () => {
+    const k = currentKey.current;
+    if (k) updateItem(k, { status: 'pending', note: '' });
+    currentKey.current = null;
+    startQueue();
+  };
+
+  /* ---------- الإضافة التلقائية (🤖): مزامنة دورية ثم تسجيل الجديد ---------- */
+  useEffect(() => {
+    if (!settings.autoPilot) return;
+    activateKeepAwakeAsync('autopilot').catch(() => {});
+    lastActivity.current = 0;
+    const iv = setInterval(() => {
+      if (runningRef.current || syncingRef.current) return;
+      if (queueRef.current.some(i => i.status === 'failed' && i.k === currentKey.current)) return; // ينتظر تدخلك
+      if (Date.now() - lastActivity.current >= settingsRef.current.autoPilotMinutes * 60000) startSync(true);
+    }, 5000);
+    return () => {
+      clearInterval(iv);
+      deactivateKeepAwake('autopilot').catch(() => {});
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [settings.autoPilot]);
 
-  const onAction = (action: Action) => {
-    if (action === 'stop') {
-      runAction('stop', 'emis');
-      if (settingsRef.current.autoPilot && !apPausedRef.current) pauseAutoPilot('أوقفتها بزر الإيقاف');
+  const onAutoPilotPress = () => {
+    const s = settingsRef.current;
+    if (s.autoPilot) {
+      Alert.alert('الإضافة التلقائية', 'تعمل الآن: مزامنة كل ' + s.autoPilotMinutes + ' دقيقة ثم تسجيل الجديد.', [
+        { text: 'إلغاء', style: 'cancel' },
+        { text: 'إيقاف', style: 'destructive', onPress: () => saveSettings({ ...settingsRef.current, autoPilot: false }) },
+      ]);
+      return;
     }
-    else runAction(action, 'site');
-    if (action === 'done') toast('تحديد «تمت المراجعة» والانتقال للطالب التالي...');
-    if (action === 'skip') toast('الانتقال للطالب التالي غير المراجَع...');
+    Alert.alert(
+      'الإضافة التلقائية',
+      `كل ${s.autoPilotMinutes === 1 ? 'دقيقة' : s.autoPilotMinutes + ' دقائق'} يحدّث التطبيق موقع الطلاب ويجلب الاستمارات الجديدة (بدون «تمت المراجعة») ويسجّلها في EMIS ويحفظها.\n\nيعمل والتطبيق مفتوح وأنت مسجّل الدخول في الموقعين، ويتوقف عند أي حقل ناقص.`,
+      [
+        { text: 'إلغاء', style: 'cancel' },
+        {
+          text: 'تشغيل',
+          onPress: () => {
+            setApNote('سيبدأ الفحص الآن');
+            saveSettings({ ...settingsRef.current, autoPilot: true });
+          },
+        },
+      ],
+    );
   };
-
-  // حالة العمل من رسائل السكربت
-  const applyStatus = useCallback((k: string, v: unknown, pane: Pane) => {
-    if (k === K_DATA && pane === 'site') setStudent(parseStudent(v));
-    if (k === K_CMD && pane === 'site' && typeof v === 'string' && v) {
-      try {
-        const cmd = JSON.parse(v);
-        setPhase(cmd.mode === 'newOnly' ? 'opening' : 'filling');
-        setDetail('');
-      } catch {
-        /* ignore */
-      }
-    }
-    if (k === K_STATUS && pane === 'emis' && typeof v === 'string' && v) {
-      try {
-        const st = JSON.parse(v);
-        if (st.info) {
-          setPhase('info');
-          setDetail(st.info);
-        } else if (st.stopped) {
-          setPhase('stopped');
-          setDetail((st.miss && st.miss[0]) || '');
-        } else if (st.saved && !(st.miss && st.miss.length)) {
-          setPhase('saved');
-          setDetail(`عُبّئ ${st.ok} حقل وحُفظ الطالب`);
-        } else {
-          setPhase('incomplete');
-          setDetail(st.miss && st.miss.length ? 'ناقص: ' + st.miss.join('، ') : 'لم يُعبّأ شيء');
-        }
-      } catch {
-        /* ignore */
-      }
-    }
-  }, []);
 
   /* ---------- الرسائل القادمة من الصفحات ---------- */
   const onMessage = useCallback(
@@ -300,101 +438,66 @@ function Main() {
           return;
         case 'bar':
           setBarLog(prev => (prev[pane] === m.log ? prev : { ...prev, [pane]: m.log }));
-          if (pane === 'site' && apRunning()) onSiteBarDuringCycle(m.log);
+          // بعد تحديث موقع الطلاب: السكربت جاهز ← نبدأ المزامنة (بعد مهلة لتحميل القائمة)
+          if (pane === 'site' && syncAfterReload.current) {
+            syncAfterReload.current = false;
+            setTimeout(injectSync, 3000);
+          }
           return;
         case 'act': {
           if (m.ok) return;
-          const [action, from] = m.action.split(':') as [Action, Pane];
-          if (action === 'skip' && cycle.current.stage === 'opening') {
-            endCycleIdle(`تعذّر فتح قائمة الطلاب في موقعك · آخر فحص ${hhmm()}`);
-            return;
+          if (m.action === 'sync:site') {
+            syncFailed('افتح صفحة قائمة الطلاب في «موقع الطلاب» ثم اضغط «مزامنة»');
+            if (!settingsRef.current.split) setActive('site');
           }
-          // لا توجد صفحة طالب مفتوحة في موقعك: «تعبئة» و«ص2» تعملان من EMIS بآخر طالب محفوظ
-          if ((action === 'fill' || action === 'page2') && from === 'site') {
-            runAction(action, 'emis');
-            setPhase('filling');
-            setDetail('');
-            if (settingsRef.current.autoSwitch && !settingsRef.current.split) setActive('emis');
-            return;
-          }
-          if (action === 'stop' && from === 'emis') {
-            runAction('stop', 'site');
-            return;
-          }
-          toast(
-            action === 'done' || action === 'skip'
-              ? 'افتح صفحة الطلاب في «موقع الطلاب» أولاً'
-              : 'المساعد غير جاهز في هذه الصفحة بعد',
-          );
           return;
         }
         case 'set': {
-          let v = m.v;
-          // بعد «تمت المراجعة» يطلب الموقع فتح «جديد» فقط (newOnly).
-          // إن فُعّل «تعبئة الطالب التالي تلقائياً» نحوّله إلى «جديد + تعبئة» (new) الموجود في السكربت.
-          if (m.k === K_CMD && pane === 'site' && (settingsRef.current.autoFillNext || apRunning()) && typeof v === 'string') {
-            try {
-              const cmd = JSON.parse(v);
-              if (cmd && cmd.mode === 'newOnly') {
-                const d = parseStudent(store.current[K_DATA]);
-                if (apRunning() && d && processed.current.has(keyOf(d))) {
-                  // حماية من التكرار: لا نُدخل نفس الطالب مرتين
-                  store.current[m.k] = v;
-                  pauseAutoPilot(`الطالب ${d.name} ${d.father || ''} أُضيف سابقاً — تحقق منه`);
-                  return;
-                }
-                v = JSON.stringify({ ...cmd, mode: 'new' });
-                if (apRunning()) {
-                  cycle.current = { stage: 'running', t: Date.now() };
-                  if (d) setApNote(`جارٍ إضافة: ${d.name} ${d.father || ''}`);
-                }
-              }
-            } catch {
-              /* ignore */
-            }
-          }
+          const v = m.v;
           store.current[m.k] = v;
           persistStore();
-          other?.injectJavaScript(remoteSetJs(m.k, v));
-          applyStatus(m.k, v, pane);
-          if (m.k === K_STATUS && pane === 'emis' && typeof v === 'string' && v) {
-            lastActivity.current = Date.now();
-            if (apRunning() && cycle.current.stage === 'running') {
-              try {
-                const st = JSON.parse(v);
-                if (st.saved && !(st.miss && st.miss.length)) {
-                  const d = parseStudent(store.current[K_DATA]);
-                  if (d) processed.current.add(keyOf(d));
-                  setApCount(c => c + 1);
-                  setApNote(`آخر إضافة: ${d ? `${d.name} ${d.father || ''}` : ''} · ${hhmm()}`);
-                  cycle.current = { stage: 'none', t: 0 };
-                } else if (!st.info) {
-                  pauseAutoPilot(st.stopped ? (st.miss && st.miss[0]) || 'تم الإيقاف' : 'حقول ناقصة: ' + (st.miss || []).join('، '));
-                }
-              } catch {
-                /* ignore */
-              }
-            }
-          }
 
-          // التبديل التلقائي بين النافذتين (في وضع التبويبات فقط)
-          const s = settingsRef.current;
-          if (!s.autoSwitch || s.split) return;
-          if (m.k === K_CMD && pane === 'site' && v) {
-            setActive('emis');
-          } else if (m.k === K_STATUS && pane === 'emis' && typeof v === 'string' && v) {
+          // نتائج المزامنة والتحديد من موقع الطلاب (للتطبيق فقط)
+          if (pane === 'site' && m.k === K_SYNC && typeof v === 'string') {
             try {
-              if (JSON.parse(v).saved) setTimeout(() => setActive('site'), 900);
+              const p = JSON.parse(v);
+              if (p.error) syncFailed(p.error);
+              else if (p.running) setSyncText(`مزامنة: ${p.done}/${p.total} · وجدت ${p.found} للتسجيل`);
             } catch {
               /* ignore */
             }
+            return;
           }
+          if (pane === 'site' && m.k === K_QUEUE && typeof v === 'string') {
+            mergeSync(v);
+            return;
+          }
+          if (pane === 'site' && m.k === K_MARK && typeof v === 'string') {
+            try {
+              const r = JSON.parse(v);
+              if (r.res !== 'ok' && r.res !== 'already') {
+                addError('site', 'warn', `[EMIS app] لم أستطع تحديد «تمت المراجعة» في موقعك (${r.res}) — حدده يدوياً: ${r.k}`);
+              }
+            } catch {
+              /* ignore */
+            }
+            return;
+          }
+          // نتيجة EMIS لا تُرسل لموقع الطلاب (حتى لا يحدد «تمت المراجعة» لطالب آخر مفتوح هناك)
+          if (pane === 'emis' && m.k === K_STATUS) {
+            if (typeof v === 'string' && v) onEmisStatus(v);
+            return;
+          }
+          // أوامر السكربت القديمة من موقع الطلاب لا تُرسل لـ EMIS (التسجيل يتم من قائمة التطبيق)
+          if (pane === 'site' && (m.k === K_CMD || m.k === K_DATA)) return;
+
+          other?.injectJavaScript(remoteSetJs(m.k, v));
           return;
         }
       }
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [addError, persistStore, applyStatus, runAction],
+    [addError, persistStore],
   );
 
   const onNav = useCallback(
@@ -403,81 +506,6 @@ function Main() {
     },
     [],
   );
-
-  /* ---------- مؤقت الإضافة التلقائية ---------- */
-  useEffect(() => {
-    if (!settings.autoPilot) {
-      cycle.current = { stage: 'none', t: 0 };
-      return;
-    }
-    // السكربت: تحديد «تمت المراجعة» تلقائياً بعد الحفظ + فتح «جديد» للطالب التالي
-    for (const [k, v] of [[K_AUTO_REVIEW, true], [K_CHAIN, true]] as const) {
-      store.current[k] = v;
-      siteRef.current?.injectJavaScript(remoteSetJs(k, v));
-    }
-    persistStore();
-    activateKeepAwakeAsync('autopilot').catch(() => {});
-    const iv = setInterval(() => {
-      if (apPausedRef.current) return;
-      const c = cycle.current;
-      const now = Date.now();
-      if (c.stage === 'none') {
-        const busy = phaseRef.current === 'filling' || phaseRef.current === 'opening';
-        if (!busy && now - lastActivity.current >= settingsRef.current.autoPilotMinutes * 60000) startCycle();
-      } else if ((c.stage === 'reloading' || c.stage === 'opening') && now - c.t > 45000) {
-        endCycleIdle(`تعذّر فتح موقع الطلاب · آخر محاولة ${hhmm()}`);
-      } else if (c.stage === 'running' && now - c.t > 8 * 60000) {
-        pauseAutoPilot('انتهت المهلة دون حفظ الطالب');
-      }
-    }, 4000);
-    return () => {
-      clearInterval(iv);
-      deactivateKeepAwake('autopilot').catch(() => {});
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [settings.autoPilot]);
-
-  const enableAutoPilot = () => {
-    setApPaused(false);
-    apPausedRef.current = false;
-    lastActivity.current = 0;
-    setApNote('سيبدأ الفحص الآن');
-    saveSettings({ ...settingsRef.current, autoPilot: true });
-  };
-
-  // زر 🤖 في اللوحة
-  const onAutoPilotPress = () => {
-    const s = settingsRef.current;
-    if (!s.autoPilot) {
-      Alert.alert(
-        'الإضافة التلقائية',
-        `كل ${s.autoPilotMinutes === 1 ? 'دقيقة' : s.autoPilotMinutes + ' دقائق'} يفحص التطبيق موقع الطلاب، ويُدخل كل استمارة جديدة (ليس عليها «تمت المراجعة») في EMIS ويحفظها ثم يحددها «تمت المراجعة».\n\nيعمل والتطبيق مفتوح وأنت مسجّل الدخول في EMIS، ويتوقف عند أي حقل ناقص. جرّب «تعبئة» يدوياً على طالب واحد أولاً.`,
-        [
-          { text: 'إلغاء', style: 'cancel' },
-          { text: 'تشغيل', onPress: enableAutoPilot },
-        ],
-      );
-      return;
-    }
-    Alert.alert('الإضافة التلقائية', apPausedRef.current ? 'متوقفة مؤقتاً' : 'تعمل الآن', [
-      { text: 'إلغاء', style: 'cancel' },
-      { text: 'إيقاف نهائي', style: 'destructive', onPress: () => saveSettings({ ...settingsRef.current, autoPilot: false }) },
-      { text: apPausedRef.current ? 'استئناف' : 'إيقاف مؤقت', onPress: toggleAutoPilot },
-    ]);
-  };
-
-  const toggleAutoPilot = () => {
-    if (apPausedRef.current) {
-      setApPaused(false);
-      apPausedRef.current = false;
-      setApNote('استؤنفت · سيبدأ الفحص الآن');
-      lastActivity.current = 0;
-      cycle.current = { stage: 'none', t: 0 };
-    } else {
-      pauseAutoPilot('أوقفتها يدوياً');
-    }
-  };
-  const autoPilotInfo: AutoPilotInfo = { enabled: settings.autoPilot, paused: apPaused, note: apNote, count: apCount };
 
   /* ---------- زر الرجوع في أندرويد ---------- */
   useEffect(() => {
@@ -497,9 +525,10 @@ function Main() {
   const buildLogText = () => {
     const s = settingsRef.current;
     return [
-      'سجل مساعد EMIS (التطبيق v7.6.4)',
-      `وضع الكمبيوتر: ${s.desktopEmis ? 'مفعّل' : 'غير مفعّل'} — الشاشتان معاً: ${s.split ? 'نعم' : 'لا'} — تعبئة التالي تلقائياً: ${s.autoFillNext ? 'نعم' : 'لا'}`,
+      `سجل مساعد EMIS (التطبيق v${APP_VERSION})`,
+      `وضع الكمبيوتر: ${s.desktopEmis ? 'مفعّل' : 'غير مفعّل'} — قوائم كالكمبيوتر: ${s.desktopUA ? 'نعم' : 'لا'} — إضافة تلقائية: ${s.autoPilot ? 'نعم' : 'لا'}`,
       `الحالة: ${phase} ${detail}`,
+      `القائمة: ${queueRef.current.map(i => `${nameOf(i)}=${i.status}${i.note ? '(' + i.note + ')' : ''}`).join(' | ')}`,
       '',
       '===== EMIS =====',
       barLog.emis || '(فارغ)',
@@ -519,12 +548,12 @@ function Main() {
   const clearHelperData = () => {
     store.current = {};
     AsyncStorage.removeItem(K_STORE).catch(() => {});
-    setStudent(null);
+    setQueue(() => []);
     setPhase('idle');
     setDetail('');
     reload('site');
     reload('emis');
-    toast('تم مسح بيانات المساعد');
+    toast('تم مسح بيانات المساعد (تسجيل الدخول باقٍ)');
   };
 
   if (!ready || !fontsLoaded) {
@@ -536,6 +565,7 @@ function Main() {
   }
 
   const split = settings.split;
+  const current = queue.find(i => i.k === currentKey.current) || null;
 
   const renderPane = (p: Pane) => {
     const url = normUrl(p === 'site' ? settings.siteUrl : settings.emisUrl);
@@ -567,6 +597,7 @@ function Main() {
           sharedCookiesEnabled
           thirdPartyCookiesEnabled
           cacheEnabled
+          incognito={false}
           setSupportMultipleWindows={false}
           originWhitelist={['*']}
           mixedContentMode="compatibility"
@@ -590,7 +621,7 @@ function Main() {
         {split ? (
           <View style={{ flex: 1, flexDirection: ROW, alignItems: 'center', gap: 8 }}>
             <View style={styles.logo}>
-              <Icon name="lightning-bolt" size={18} color={colors.navy} />
+              <Icon name="clipboard-check" size={18} color={colors.navy} />
             </View>
             <T bold style={{ color: '#fff', fontSize: 17 }}>
               مساعد EMIS
@@ -630,17 +661,22 @@ function Main() {
         {/* لوحة التحكم فوق الصفحة (لا تغيّر حجم الصفحة حتى لا تتحرك القوائم أثناء التعبئة) */}
         <SafeAreaView edges={['bottom']} style={styles.panelWrap} pointerEvents="box-none">
           <ControlPanel
-            student={student}
+            current={current}
             phase={phase}
             detail={detail}
+            items={queue}
+            syncText={syncText}
+            running={running}
             emisLog={barLog.emis}
             siteLog={barLog.site}
-            onFill={() => onAction('fill')}
-            onPage2={() => onAction('page2')}
-            onStop={() => onAction('stop')}
-            onDone={() => onAction('done')}
-            onSkip={() => onAction('skip')}
-            autoPilot={autoPilotInfo}
+            onSync={() => startSync(false)}
+            onRun={startQueue}
+            onStop={onStop}
+            onDoneManual={onDoneManual}
+            onSkip={onSkip}
+            onRetry={onRetry}
+            onClearFinished={() => setQueue(q => q.filter(i => i.status !== 'done' && i.status !== 'skipped'))}
+            autoPilot={{ enabled: settings.autoPilot, note: apNote }}
             onAutoPilotPress={onAutoPilotPress}
           />
         </SafeAreaView>
@@ -652,12 +688,6 @@ function Main() {
         errors={errors}
         onClose={() => setShowSettings(false)}
         onSave={s => {
-          if (s.autoPilot && !settingsRef.current.autoPilot) {
-            setApPaused(false);
-            apPausedRef.current = false;
-            lastActivity.current = 0;
-            setApNote('سيبدأ الفحص الآن');
-          }
           saveSettings(s);
           setShowSettings(false);
           toast('تم حفظ الإعدادات');

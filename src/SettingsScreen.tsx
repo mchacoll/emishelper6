@@ -44,7 +44,7 @@ export function SettingsScreen(props: {
             <SettingRow
               icon="robot-outline"
               title="إضافة الاستمارات الجديدة إلى EMIS تلقائياً"
-              subtitle="يفحص موقع الطلاب كل فترة، ويُدخل كل طالب ليس عليه «تمت المراجعة» في EMIS ويحفظه ثم يحدده «تمت المراجعة». يعمل والتطبيق مفتوح وأنت مسجّل الدخول في EMIS، ويتوقف عند أي حقل ناقص."
+              subtitle="كل فترة: مزامنة موقع الطلاب، ثم تسجيل كل استمارة جديدة (بدون «تمت المراجعة») في EMIS وحفظها. يعمل والتطبيق مفتوح وأنت مسجّل الدخول في الموقعين، ويتوقف عند أي حقل ناقص."
               value={d.autoPilot}
               onChange={v => {
                 if (!v) return set('autoPilot', false);
@@ -84,16 +84,9 @@ export function SettingsScreen(props: {
           <SectionTitle>طريقة العمل</SectionTitle>
           <Card>
             <SettingRow
-              icon="file-document-multiple-outline"
-              title="تعبئة الطالب التالي تلقائياً"
-              subtitle="بعد «تمت المراجعة» يُفتح «جديد» في EMIS ويُعبّأ الطالب التالي دون ضغط. يتوقف عند أي حقل ناقص."
-              value={d.autoFillNext}
-              onChange={v => set('autoFillNext', v)}
-            />
-            <SettingRow
               icon="swap-horizontal"
               title="التنقل التلقائي بين الشاشتين"
-              subtitle="عرض EMIS أثناء التعبئة ثم العودة لموقع الطلاب بعد الحفظ."
+              subtitle="عرض EMIS تلقائياً أثناء التسجيل."
               value={d.autoSwitch}
               onChange={v => set('autoSwitch', v)}
               last
@@ -188,7 +181,7 @@ export function SettingsScreen(props: {
           />
 
           <T style={{ color: colors.muted, fontSize: 12, textAlign: 'center', marginTop: 12 }}>
-            مساعد EMIS · الإصدار 7.6.4
+            مساعد EMIS · الإصدار 7.7.0
           </T>
         </ScrollView>
       </SafeAreaView>
