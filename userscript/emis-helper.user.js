@@ -1,7 +1,7 @@
 // ==UserScript==
-// @name         مساعد EMIS – تعبئة تلقائية (v7.7.2)
+// @name         مساعد EMIS – تعبئة تلقائية (v7.7.3)
 // @namespace    emis-helper
-// @version      7.7.2
+// @version      7.7.3
 // @description  تعبئة تلقائية لـ EMIS + حفظ + «تمت المراجعة» + فتح «جديد» + نقل «الاحتياجات الخاصة» من EMIS إلى موقعك
 // @match        *://*/*
 // @grant        GM_setValue
@@ -315,7 +315,7 @@
     ui.dir = 'rtl';
 
     const head = mk('div', 'display:flex;justify-content:space-between;align-items:center;gap:8px');
-    head.appendChild(mk('b', 'font-size:13.5px;', title + ' v7.7.2'));
+    head.appendChild(mk('b', 'font-size:13.5px;', title + ' v7.7.3'));
     const minBtn = mk('button',
       'background:none;border:0;color:#fff;font-size:22px;' +
       'min-width:32px;min-height:32px;cursor:pointer;padding:0;line-height:1;', '−');
@@ -1320,6 +1320,46 @@
     const f = /انث/.test(s), m = /ذكر/.test(s);
     return f && !m ? 'f' : (m && !f ? 'm' : '');
   };
+  // (v7.7.3) الجنس بالضغط فقط: افتح القائمة ← انتظر ظهور «ذكر/أنثى» ← اضغط المطلوب ← انتهى
+  async function chooseGenderClick(ctrl, value) {
+    const want = genderOf([].concat(value)[0]);
+    if (!want) return false;
+    let anchor = ctrl.closest(WRAP_SEL) || ctrl;
+    if (anchor.getBoundingClientRect().height > 120) anchor = ctrl;
+    const control = anchor.querySelector('.q-field__control') || anchor;
+    const arrow = anchor.querySelector('.q-select__dropdown-icon,[class*=dropdown-icon],[class*=arrow],[class*=chevron],[class*=trigger]');
+    const box = anchor.querySelector('.q-field__native,.p-select-label,.p-dropdown-label') || anchor;
+    const shownKindNow = () => shownGender(norm((box.innerText || '') + ' ' + (ctrl.value || '')));
+    const findOpt = () => gatherOptions(anchor).find(o => optGender(o.text) === want) || null;
+    const label = want === 'f' ? 'أنثى' : 'ذكر';
+    if (shownKindNow() === want) { lastChosen = label + ' (موجود)'; return true; }
+
+    try { ctrl.scrollIntoView?.({ block: 'center' }); } catch { /* ignore */ }
+    await sleep(60);
+    const openers = [
+      () => press(control),
+      () => press(ctrl),
+      () => { if (arrow) press(arrow); },
+      () => { try { ctrl.focus?.(); } catch { /* ignore */ } pressKey(ctrl, 'ArrowDown'); },
+    ];
+    for (const open of openers) {
+      await closeLists();
+      open();
+      if (!(await waitUntil(() => !!findOpt(), 3000, 80))) continue;
+      const o = findOpt();
+      lastOptsTxt = gatherOptions(anchor).slice(0, 6).map(x => x.text).join(' | ');
+      const row = o.el.closest(OPT_ROW) || o.el;
+      for (const el of (row !== o.el ? [o.el, row] : [o.el])) {
+        hoverPress(el);
+        if (await waitUntil(() => shownKindNow() === want, 1500, 80)) { lastChosen = o.text; return true; }
+        if (!findOpt()) break;   // القائمة أُغلقت
+      }
+      if (shownKindNow() === want) { lastChosen = o.text; return true; }
+    }
+    await closeLists();
+    return shownKindNow() === want ? (lastChosen = label, true) : false;
+  }
+
   function chooseGender(ctrl, value) {
     const words = [].concat(value).filter(x => typeof x === 'string' && !isEmpty(x));
     const want = genderOf(words[0]);
@@ -1836,8 +1876,8 @@
       { l: ['رقم البطاقة الوطنية الموحدة', 'رقم البطاقة الوطنية'], v: isCivil(d) ? null : d.nationalId, kind: 'text' },
       // (v7.7) الجنس من معلومات الطالب/الطالبة: يضغط «ذكر» أو «أنثى»، وإن فشل يكتبها ثم يضغط عليها
       // (v7.7.1) الجنس مثل باقي القوائم: يكتب «ذكر» أو «أنثى» (بالهمزة) ثم يضغط على الخيار
-      // (v7.7.2) خاص بالجنس فقط: يكتب «نثى» فيطابق «أنثى» و«انثى» من أول مرة، وإن كان مختاراً صحيحاً لا يُعاد
-      { l: ['الجنس'], v: genderCandidates(d.gender, d.school), kind: 'select', coreFirst: true, keepIfSet: true },
+      // (v7.7.3) الجنس: بدون كتابة. نفتح القائمة ونضغط «ذكر» أو «أنثى» عند ظهوره، وإن كان مختاراً صحيحاً لا يُعاد
+      { l: ['الجنس'], v: genderCandidates(d.gender, d.school), kind: 'select', genderClick: true, keepIfSet: true },
       // (v7.6) الجنسية: يكتب «العراق» ثم ينتظر ظهورها ويضغط عليها (احتياط: «العراقية»)
       { l: ['الجنسية'], v: ['العراق', 'العراقية'], kind: 'select', typeSearch: true },
       { l: ['اللغة الأم'], v: langCandidates(d.motherTongue), kind: 'select' },
@@ -1893,7 +1933,8 @@
       lastChosen = '';
       lastOptsTxt = '';
       try {
-        done = item.secRaw ? await chooseSection(ctrl, item.secRaw)
+        done = item.genderClick ? await chooseGenderClick(ctrl, value)
+          : item.secRaw ? await chooseSection(ctrl, item.secRaw)
           : item.gender ? await chooseGender(ctrl, value)
           : item.living ? await chooseLiving(ctrl, value[0])
           : await setControl(ctrl, value, item.kind, item);
