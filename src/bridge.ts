@@ -81,6 +81,49 @@ const SHIM = String.raw`
       return orig.apply(console, arguments);
     };
   });
+  // منع ظهور الكيبورد عندما يضع السكربت (أو الموقع بسببه) المؤشر داخل حقل.
+  // ظهور الكيبورد يصغّر الشاشة فتقفز القائمة المنسدلة إلى أعلى الصفحة ويفشل الاختيار.
+  // عند لمسك أنت للحقل يعمل الكيبورد طبيعياً.
+  var lastTouch = 0;
+  function isField(el) {
+    return el && el.tagName && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.isContentEditable);
+  }
+  function unguard(el) {
+    if (!el || !el.__gmIm) return;
+    try {
+      if (el.__gmIm === 1) el.removeAttribute('inputmode');
+      else el.setAttribute('inputmode', el.__gmImOld);
+    } catch (e) { /* ignore */ }
+    el.__gmIm = 0;
+  }
+  function guard(el) {
+    try {
+      if (!isField(el) || el.__gmIm) return;
+      if (Date.now() - lastTouch < 1200) return;   // لمسة حقيقية منك: اترك الكيبورد
+      if (el.hasAttribute('inputmode')) { el.__gmImOld = el.getAttribute('inputmode'); el.__gmIm = 2; }
+      else el.__gmIm = 1;
+      el.setAttribute('inputmode', 'none');
+    } catch (e) { /* ignore */ }
+  }
+  ['touchstart', 'pointerdown', 'mousedown'].forEach(function (t) {
+    document.addEventListener(t, function (e) {
+      if (!e.isTrusted) return;
+      var tg = e.target;
+      if (tg && tg.closest && tg.closest('#emis-helper-ui')) return;   // أزرار الشريط ليست كتابة
+      lastTouch = Date.now();
+      if (tg && tg.__gmIm) unguard(tg);
+    }, true);
+  });
+  try {
+    var origFocus = HTMLElement.prototype.focus;
+    HTMLElement.prototype.focus = function () { guard(this); return origFocus.apply(this, arguments); };
+  } catch (e) { /* ignore */ }
+  document.addEventListener('focusin', function (e) { guard(e.target); }, true);
+  document.addEventListener('focusout', function (e) {
+    var el = e.target;
+    setTimeout(function () { if (el && el.__gmIm && document.activeElement !== el) unguard(el); }, 0);
+  }, true);
+
   // نسخة من سجل الشريط الأزرق تُرسل للتطبيق (لزر «مشاركة السجل»)
   var lastBar = '';
   setInterval(function () {
@@ -127,7 +170,7 @@ export function desktopViewportJs(width: number): string {
       var c = 'width=' + W;
       if (m.getAttribute('content') !== c) m.setAttribute('content', c);
       if (!document.getElementById('emis-desktop-style') && (document.head || document.documentElement)) {
-        var z = Math.max(1, Math.min(4, W / (screen.width || 400)));
+        var z = Math.max(1, Math.min(2.2, (W / (screen.width || 400)) * 0.6));
         var st = document.createElement('style');
         st.id = 'emis-desktop-style';
         st.textContent = '#emis-helper-ui{transform:scale(' + z.toFixed(2) + ');transform-origin:top left;}';
