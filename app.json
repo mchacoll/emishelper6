@@ -2,7 +2,7 @@
   "expo": {
     "name": "مساعد EMIS",
     "slug": "emishelper",
-    "version": "7.7.6",
+    "version": "7.8.0",
     "orientation": "default",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "light",
@@ -14,7 +14,7 @@
     },
     "android": {
       "package": "com.emishelper.app",
-      "versionCode": 776,
+      "versionCode": 780,
       "adaptiveIcon": {
         "backgroundColor": "#0F3B57",
         "foregroundImage": "./assets/android-icon-foreground.png",

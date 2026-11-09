@@ -1,7 +1,7 @@
 // ==UserScript==
-// @name         مساعد EMIS – تعبئة تلقائية (v7.7.6)
+// @name         مساعد EMIS – تعبئة تلقائية (v7.8.0)
 // @namespace    emis-helper
-// @version      7.7.6
+// @version      7.8.0
 // @description  تعبئة تلقائية لـ EMIS + حفظ + «تمت المراجعة» + فتح «جديد» + نقل «الاحتياجات الخاصة» من EMIS إلى موقعك
 // @match        *://*/*
 // @grant        GM_setValue
@@ -315,7 +315,7 @@
     ui.dir = 'rtl';
 
     const head = mk('div', 'display:flex;justify-content:space-between;align-items:center;gap:8px');
-    head.appendChild(mk('b', 'font-size:13.5px;', title + ' v7.7.6'));
+    head.appendChild(mk('b', 'font-size:13.5px;', title + ' v7.8.0'));
     const minBtn = mk('button',
       'background:none;border:0;color:#fff;font-size:22px;' +
       'min-width:32px;min-height:32px;cursor:pointer;padding:0;line-height:1;', '−');
@@ -2400,9 +2400,15 @@
     const K_QUEUE = 'emis_queue_v1', K_SYNC = 'emis_sync_v1', K_MARK = 'emis_mark_v1';
     let syncBusy = false;
     // يفتح كل طالب في القائمة (ليس عليه «تمت المراجعة») ويقرأ معلوماته كاملة
-    async function syncAll(known) {
+    async function syncAll(known, exist) {
       if (syncBusy) return;
       const knownKeys = (known || []).filter(k => k && k.length >= 5);
+      // (v7.8) طلاب موجودون في EMIS الحقيقي (الاسم الثلاثي أو رقم البطاقة): لا نزامنهم
+      const exKeys = ((exist && exist.keys) || []).filter(k => k && k.length >= 5);
+      const exIds = new Set(((exist && exist.ids) || []).map(String));
+      const digits = t => (t || '').replace(/[\u0660-\u0669]/g, d => d.charCodeAt(0) - 0x660);
+      const inEmisRow = txt => exKeys.some(k => txt.includes(k)) || [...digits(txt).matchAll(/\d{10,14}/g)].some(m => exIds.has(m[0]));
+      let existing = 0;
       syncBusy = true;
       stopRequested = false;
       const prog = o => gmSet(K_SYNC, JSON.stringify({ ...o, t: Date.now() }));
@@ -2418,9 +2424,11 @@
           checkStop();
           const r = findStudentRows()[i];
           if (!r) break;
-          if (isReviewedRow(r.row)) { reviewed++; prog({ running: true, done: i + 1, total, found: items.length, reviewed }); continue; }
+          if (isReviewedRow(r.row)) { reviewed++; prog({ running: true, done: i + 1, total, found: items.length, reviewed, existing }); continue; }
           // (v7.7.1) مزامنة سريعة: طالب معروف للتطبيق (قرأناه سابقاً) لا نفتحه مرة أخرى
           const rowTxt = norm(r.row.textContent);
+          // (v7.8) موجود في EMIS: لا نفتحه ولا نزامنه
+          if (inEmisRow(rowTxt)) { existing++; prog({ running: true, done: i + 1, total, found: items.length, reviewed, existing }); continue; }
           const kn = knownKeys.find(k => rowTxt.includes(k));
           if (kn) {
             if (!seen.has(kn)) { seen.add(kn); items.push({ k: kn, d: null }); }
@@ -2434,13 +2442,15 @@
           const c = getCurrent();
           if (c) {
             c.d.reviewed = isReviewedNow();
+            const nid = digits(c.d.nationalId || '').replace(/\D/g, '');
             if (c.d.reviewed) reviewed++;
+            else if (exKeys.includes(c.k) || (nid && exIds.has(nid))) existing++;
             else if (!seen.has(c.k)) { seen.add(c.k); items.push({ k: c.k, d: c.d }); }
           }
-          prog({ running: true, done: i + 1, total, found: items.length, reviewed });
+          prog({ running: true, done: i + 1, total, found: items.length, reviewed, existing });
         }
-        gmSet(K_QUEUE, JSON.stringify({ items, reviewed, total, t: Date.now() }));
-        prog({ running: false, done: total, total, found: items.length, reviewed });
+        gmSet(K_QUEUE, JSON.stringify({ items, reviewed, existing, total, t: Date.now() }));
+        prog({ running: false, done: total, total, found: items.length, reviewed, existing });
       } catch (e) {
         prog({ running: false, error: e && e.isStop ? 'أُوقفت المزامنة' : 'خطأ: ' + (e && e.message ? e.message : e) });
       } finally { syncBusy = false; }
@@ -2472,7 +2482,7 @@
         return res(ok ? 'ok' : 'unknown');
       } catch (e) { return res('error'); }
     }
-    window.__emisSync = known => { syncAll(known); };
+    window.__emisSync = (known, exist) => { syncAll(known, exist); };
     window.__emisMark = k => { markByKey(k); };
 
     bar = createBar('مساعد EMIS',
@@ -2697,6 +2707,91 @@
       log('⚠️ ضغطت «جديد» ولم يفتح النموذج');
       return false;
     }
+
+    /* ---------- (v7.8) قراءة قائمة طلاب EMIS الحقيقي (الأسماء وأرقام البطاقات) ---------- */
+    const K_EXIST = 'emis_existing_v1';
+    let listBusy = false;
+    async function listEmisStudents() {
+      if (listBusy) return;
+      listBusy = true;
+      stopRequested = false;
+      const prog = o => gmSet(K_EXIST, JSON.stringify({ ...o, t: Date.now() }));
+      const digits = t => (t || '').replace(/[\u0660-\u0669]/g, d => d.charCodeAt(0) - 0x660);
+      try {
+        const rowsNow = () => [...document.querySelectorAll('tbody tr')].filter(r => !inUI(r) && vis(r) && r.querySelectorAll('td').length >= 2);
+        if (!rowsNow().length) { prog({ done: true, error: 'افتح «إدارة الطلاب» (قائمة الطلاب) في EMIS' }); return; }
+        const tm = digits(document.body.innerText || '').match(/(\d+)\s*\n?\s*عدد الطلاب/) || digits(document.body.innerText || '').match(/عدد الطلاب\s*\n?\s*(\d+)/);
+        const total = tm ? +tm[1] : 0;
+        const keys = new Set(), ids = new Set(), seenRows = new Set();
+        const rowKey = r => clean(r.innerText || r.textContent || '');
+        const collect = () => {
+          for (const r of rowsNow()) {
+            const txt = rowKey(r);
+            if (!txt || seenRows.has(txt)) continue;
+            seenRows.add(txt);
+            for (const m of digits(txt).matchAll(/\d{10,14}/g)) ids.add(m[0]);
+            for (const c of r.querySelectorAll('td')) {
+              const tk = clean(c.innerText || c.textContent || '').split(/\s+/).filter(w => /^[\u0621-\u064A]+$/.test(w));
+              if (tk.length >= 3) keys.add(norm(tk[0]) + norm(tk[1]) + norm(tk[2]));
+            }
+          }
+        };
+        const report = () => prog({ done: false, rows: seenRows.size, total });
+
+        // عدد الصفوف في الصفحة: أكبر عدد (أو «الكل») إن وُجد
+        try {
+          const bottom = document.querySelector('.q-table__bottom,[class*=pagination],[class*=table-bottom]');
+          const sel = bottom && bottom.querySelector('.q-select,.q-field,select,[role=combobox]');
+          if (sel) {
+            if (sel.tagName === 'SELECT') {
+              const best = [...sel.options].sort((a, b) => (+b.value || 1e9 * (/all|الكل/i.test(b.text))) - (+a.value || 0))[0];
+              if (best) { sel.value = best.value; sel.dispatchEvent(new Event('change', { bubbles: true })); }
+            } else {
+              press(sel.querySelector('.q-field__control') || sel);
+              await waitUntil(() => document.querySelectorAll('.q-menu .q-item,[role=option]').length > 0, 2500, 100);
+              const opts = [...document.querySelectorAll('.q-menu .q-item,[role=option]')].filter(vis);
+              const score = o => { const t = digits(clean(o.textContent)); return /all|الكل/i.test(t) ? 1e9 : (+t || 0); };
+              const best = opts.sort((a, b) => score(b) - score(a))[0];
+              if (best && score(best) > 0) { press(best); await sleep(1200); } else await closeLists();
+            }
+          }
+        } catch (e) { if (e && e.isStop) throw e; }
+
+        collect(); report();
+        let fwd = '';   // نص زر «الصفحة التالية» الذي نجح (نجربه أولاً بعد ذلك)
+        const t0 = Date.now();
+        for (let i = 0; i < 300 && Date.now() - t0 < 90000; i++) {
+          checkStop();
+          // 1) تمرير للأسفل (القوائم التي تُحمّل عند التمرير)
+          const before = seenRows.size;
+          const body = document.querySelector('tbody');
+          let sc = body && body.parentElement;
+          while (sc && sc !== document.body && !(sc.scrollHeight > sc.clientHeight + 10 && /auto|scroll/.test(getComputedStyle(sc).overflowY))) sc = sc.parentElement;
+          if (sc && sc !== document.body) sc.scrollTop = sc.scrollHeight;
+          window.scrollTo(0, document.documentElement.scrollHeight);
+          await sleep(350);
+          collect();
+          if (seenRows.size > before) { report(); continue; }
+          // 2) الصفحة التالية
+          const navBtns = [...document.querySelectorAll('.q-table__bottom button,[class*=pagination] button,button')]
+            .filter(b => !inUI(b) && vis(b) && !b.disabled && !b.closest('.disabled,[aria-disabled=true]') &&
+              /^(chevron_left|chevron_right|keyboard_arrow_left|keyboard_arrow_right|navigate_before|navigate_next|التالي|›|‹|>|<)$/.test(clean(b.textContent)));
+          if (fwd) navBtns.sort((a, b) => (clean(b.textContent) === fwd) - (clean(a.textContent) === fwd));
+          let moved = false;
+          for (const nb of fwd ? navBtns.filter(b => clean(b.textContent) === fwd) : navBtns) {
+            const txt = clean(nb.textContent);
+            press(nb);
+            if (await waitUntil(() => rowsNow().some(r => !seenRows.has(rowKey(r))), 3000, 120)) { moved = true; fwd = txt; break; }
+          }
+          if (!moved) break;
+          collect(); report();
+        }
+        prog({ done: true, keys: [...keys], ids: [...ids], rows: seenRows.size, total });
+      } catch (e) {
+        prog({ done: true, error: e && e.isStop ? 'أُوقفت القراءة' : 'خطأ: ' + (e && e.message ? e.message : e) });
+      } finally { listBusy = false; }
+    }
+    window.__emisList = () => { listEmisStudents(); };
 
     const api = createBar('مساعد EMIS',
       ui => guarded(ui, async () => {

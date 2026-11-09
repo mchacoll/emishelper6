@@ -20,6 +20,7 @@ import {
 } from './src/bridge';
 import { ControlPanel, type Phase, type QItem } from './src/ControlPanel';
 import { Onboarding } from './src/Onboarding';
+import { type SyncState, SyncScreen } from './src/SyncScreen';
 import { UpdateModal } from './src/UpdateModal';
 import { fetchManifest, installedBuild, installedVersion, loadScript, type Manifest, updateScript } from './src/updater';
 import { DEFAULT_SETTINGS, normUrl, type Settings } from './src/settings';
@@ -41,6 +42,7 @@ const K_STATUS = 'emis_status_v2';
 const K_QUEUE = 'emis_queue_v1';
 const K_SYNC = 'emis_sync_v1';
 const K_MARK = 'emis_mark_v1';
+const K_EXIST = 'emis_existing_v1';
 const DESKTOP_WIDTH = 1280;
 // متصفح كمبيوتر: EMIS يفتح القوائم المنسدلة تحت الحقل بدل نافذة ملء الشاشة الخاصة بالهاتف
 const DESKTOP_UA =
@@ -95,6 +97,11 @@ function Main() {
   const currentKey = useRef<string | null>(null);
   const syncingRef = useRef(false);
   const syncAfterReload = useRef(false);
+  const syncReload = useRef(false);
+  const syncStep = useRef<'none' | 'emis' | 'site'>('none');
+  const existingRef = useRef<{ keys: string[]; ids: string[]; rows: number } | null>(null);
+  const syncWarn = useRef('');
+  const [syncUI, setSyncUI] = useState<SyncState>({ visible: false, step: 'done', text: '', percent: 0 });
   const runAfterSync = useRef(false);
   const lastActivity = useRef(0);
 
@@ -222,14 +229,36 @@ function Main() {
   };
 
   /* ===================== المزامنة ===================== */
+  // ١) قراءة طلاب EMIS الحقيقي  ٢) قراءة موقع الطلاب وتخطي الموجودين في EMIS
   const startSync = (reloadFirst: boolean) => {
     if (syncingRef.current) return;
     syncingRef.current = true;
+    syncReload.current = reloadFirst;
+    existingRef.current = null;
+    syncWarn.current = '';
     setPhase('syncing');
     setDetail('');
-    setSyncText('قراءة الطلاب من موقعك...');
+    setSyncText('قراءة طلاب EMIS...');
     lastActivity.current = Date.now();
-    if (reloadFirst) {
+    setSyncUI({ visible: !reloadFirst, step: 'emis', text: 'قراءة طلاب EMIS الحقيقي...', percent: 3 });
+    emisRef.current?.injectJavaScript(
+      '(function(){var ok=!!window.__emisList;if(ok)window.__emisList();' +
+        'try{window.ReactNativeWebView.postMessage(JSON.stringify({__gm:"act",action:"list:emis",ok:ok}))}catch(e){}})();true;',
+    );
+    const myStart = lastActivity.current;
+    setTimeout(() => {
+      if (syncingRef.current && syncStep.current === 'emis' && lastActivity.current === myStart) {
+        syncWarn.current = 'انتهت مهلة قراءة EMIS — زامنت بدون فحص EMIS';
+        goSite();
+      }
+    }, 100000);
+    syncStep.current = 'emis';
+  };
+  const goSite = () => {
+    syncStep.current = 'site';
+    setSyncText('قراءة الطلاب من موقعك...');
+    setSyncUI(u => ({ ...u, step: 'site', text: 'قراءة الطلاب من موقعك...', percent: 35 }));
+    if (syncReload.current) {
       // تحديث موقع الطلاب أولاً لجلب الاستمارات الجديدة، ثم المزامنة عند جاهزيته
       syncAfterReload.current = true;
       setReloadKey(k => ({ ...k, site: k.site + 1 }));
@@ -243,26 +272,50 @@ function Main() {
       injectSync();
     }
   };
+  const onEmisList = (raw: string) => {
+    if (!syncingRef.current || syncStep.current !== 'emis') return;
+    let p: { done?: boolean; error?: string; rows?: number; total?: number; keys?: string[]; ids?: string[] };
+    try {
+      p = JSON.parse(raw);
+    } catch {
+      return;
+    }
+    lastActivity.current = Date.now();
+    if (!p.done) {
+      const pct = p.total ? 5 + (30 * (p.rows || 0)) / p.total : Math.min(30, 5 + (p.rows || 0) / 3);
+      setSyncUI(u => ({ ...u, text: `قراءة طلاب EMIS... ${p.rows || 0}${p.total ? ' من ' + p.total : ''}`, percent: pct }));
+      return;
+    }
+    if (p.error) {
+      syncWarn.current = p.error + ' — زامنت بدون فحص EMIS';
+    } else {
+      existingRef.current = { keys: p.keys || [], ids: p.ids || [], rows: p.rows || 0 };
+    }
+    goSite();
+  };
   const injectSync = () => {
-    // الطلاب المعروفون للتطبيق لا يُفتحون مرة أخرى (مزامنة سريعة)
+    // الطلاب المعروفون للتطبيق لا يُفتحون مرة أخرى، والموجودون في EMIS لا يُزامَنون (مزامنة سريعة)
     const known = queueRef.current.filter(i => i.status !== 'skipped').map(i => i.k).concat([...doneKeys.current]);
+    const ex = existingRef.current ? { keys: existingRef.current.keys, ids: existingRef.current.ids } : null;
     siteRef.current?.injectJavaScript(
-      '(function(){var ok=!!window.__emisSync;if(ok)window.__emisSync(' + JSON.stringify(known) + ');' +
+      '(function(){var ok=!!window.__emisSync;if(ok)window.__emisSync(' + JSON.stringify(known) + ',' + JSON.stringify(ex) + ');' +
         'try{window.ReactNativeWebView.postMessage(JSON.stringify({__gm:"act",action:"sync:site",ok:ok}))}catch(e){}})();true;',
     );
   };
   const syncFailed = (why: string) => {
     syncingRef.current = false;
+    syncStep.current = 'none';
     runAfterSync.current = false;
     setPhase('idle');
     setSyncText('');
     setDetail(why);
+    setSyncUI(u => ({ ...u, step: 'error', text: why, percent: 0, summary: undefined }));
     lastActivity.current = Date.now();
   };
 
   /** دمج نتيجة المزامنة مع قائمة التسجيل */
   const mergeSync = (raw: string) => {
-    let res: { items: { k: string; d: QItem['d'] }[]; reviewed: number; total: number };
+    let res: { items: { k: string; d: QItem['d'] }[]; reviewed: number; existing?: number; total: number };
     try {
       res = JSON.parse(raw);
     } catch {
@@ -272,8 +325,9 @@ function Main() {
     const keys = new Set(fresh.map(i => i.k));
     let added = 0;
     setQueue(q => {
-      // نُبقي المنتهين للعرض، ونحذف «بانتظار التسجيل» الذين لم يعودوا غير مراجَعين في موقعك
-      const kept = q.filter(i => i.status === 'done' || i.status === 'skipped' || keys.has(i.k));
+      // نُبقي المنتهين للعرض، ونحذف «بانتظار التسجيل» الذين لم يعودوا غير مراجَعين في موقعك أو صاروا في EMIS
+      const exKeys = new Set(existingRef.current?.keys || []);
+      const kept = q.filter(i => i.status === 'done' || i.status === 'skipped' || (keys.has(i.k) && !exKeys.has(i.k)));
       const byKey = new Map(kept.map(i => [i.k, i]));
       for (const f of fresh) {
         const ex = byKey.get(f.k);
@@ -301,11 +355,26 @@ function Main() {
     });
     const pending = queueRef.current.filter(i => i.status === 'pending').length;
     syncingRef.current = false;
+    syncStep.current = 'none';
     setSyncText('');
     setPhase('idle');
     setDetail('');
     lastActivity.current = Date.now();
-    const msg = `المزامنة: ${pending} للتسجيل${added ? ` (${added} جديد)` : ''} · ${res.reviewed || 0} عليها «تمت المراجعة» · ${hhmm()}`;
+    setSyncUI(u => ({
+      ...u,
+      step: 'done',
+      text: pending ? 'اكتملت المزامنة — اضغط «ابدأ» للتسجيل' : 'اكتملت المزامنة — لا يوجد طلاب جدد',
+      percent: 100,
+      summary: {
+        toRegister: pending,
+        added,
+        existing: res.existing || 0,
+        reviewed: res.reviewed || 0,
+        emisRows: existingRef.current?.rows || 0,
+        warn: syncWarn.current || undefined,
+      },
+    }));
+    const msg = `المزامنة: ${pending} للتسجيل${added ? ` (${added} جديد)` : ''} · ${res.existing || 0} موجود في EMIS · ${res.reviewed || 0} عليها «تمت المراجعة» · ${hhmm()}`;
     setApNote(msg);
     toast(msg);
     if ((runAfterSync.current || settingsRef.current.autoPilot) && pending) {
@@ -420,7 +489,9 @@ function Main() {
     runAfterSync.current = false;
     if (syncingRef.current) {
       siteRef.current?.injectJavaScript(clickBarJs('stop:site', 'إيقاف'));
+      emisRef.current?.injectJavaScript(clickBarJs('stop:emis', 'إيقاف'));
       syncFailed('أوقفت المزامنة');
+      return;
     }
     views.emis.current?.injectJavaScript(clickBarJs('stop:emis', 'إيقاف'));
     stopQueue('أوقفته يدوياً');
@@ -520,6 +591,11 @@ function Main() {
           return;
         case 'act': {
           if (m.ok) return;
+          if (m.action === 'list:emis') {
+            syncWarn.current = 'المساعد غير جاهز في EMIS (افتح «إدارة الطلاب») — زامنت بدون فحص EMIS';
+            if (syncingRef.current && syncStep.current === 'emis') goSite();
+            return;
+          }
           if (m.action === 'sync:site') {
             syncFailed('افتح صفحة قائمة الطلاب في «موقع الطلاب» ثم اضغط «مزامنة»');
             if (!settingsRef.current.split) setActive('site');
@@ -536,7 +612,14 @@ function Main() {
             try {
               const p = JSON.parse(v);
               if (p.error) syncFailed(p.error);
-              else if (p.running) setSyncText(`مزامنة: ${p.done}/${p.total} · وجدت ${p.found} للتسجيل`);
+              else if (p.running) {
+                setSyncText(`مزامنة: ${p.done}/${p.total} · وجدت ${p.found} للتسجيل`);
+                setSyncUI(u => ({
+                  ...u,
+                  text: `قراءة الطلاب من موقعك... ${p.done} من ${p.total}`,
+                  percent: 35 + (65 * (p.done || 0)) / Math.max(1, p.total || 1),
+                }));
+              }
             } catch {
               /* ignore */
             }
@@ -555,6 +638,10 @@ function Main() {
             } catch {
               /* ignore */
             }
+            return;
+          }
+          if (pane === 'emis' && m.k === K_EXIST) {
+            if (typeof v === 'string') onEmisList(v);
             return;
           }
           // نتيجة EMIS لا تُرسل لموقع الطلاب (حتى لا يحدد «تمت المراجعة» لطالب آخر مفتوح هناك)
@@ -789,6 +876,7 @@ function Main() {
       />
 
       <UpdateModal manifest={update} onClose={() => setUpdate(null)} />
+      <SyncScreen state={syncUI} onClose={() => setSyncUI(u => ({ ...u, visible: false }))} onStop={onStop} />
 
       <Onboarding
         visible={showGuide}
