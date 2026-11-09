@@ -1,7 +1,7 @@
 // ==UserScript==
-// @name         مساعد EMIS – تعبئة تلقائية (v8.0.0)
+// @name         مساعد EMIS – تعبئة تلقائية (v8.0.1)
 // @namespace    emis-helper
-// @version      8.0.0
+// @version      8.0.1
 // @description  تعبئة تلقائية لـ EMIS + حفظ + «تمت المراجعة» + فتح «جديد» + نقل «الاحتياجات الخاصة» من EMIS إلى موقعك
 // @match        *://*/*
 // @grant        GM_setValue
@@ -315,7 +315,7 @@
     ui.dir = 'rtl';
 
     const head = mk('div', 'display:flex;justify-content:space-between;align-items:center;gap:8px');
-    head.appendChild(mk('b', 'font-size:13.5px;', title + ' v8.0.0'));
+    head.appendChild(mk('b', 'font-size:13.5px;', title + ' v8.0.1'));
     const minBtn = mk('button',
       'background:none;border:0;color:#fff;font-size:22px;' +
       'min-width:32px;min-height:32px;cursor:pointer;padding:0;line-height:1;', '−');
@@ -2911,18 +2911,33 @@
       if (listBusy) return;
       const prog = o => gmSet(K_EXIST, JSON.stringify({ ...o, t: Date.now() }));
       try {
-        const token = emisToken();
+        let token = emisToken();
         if (!token) throw new Error('no-token');
+        // (v8.0.1) كما في تطبيق «مساعد EMIS» الأول: إعادة المحاولة عند انقطاع الشبكة،
+        // وعند 401 نعيد قراءة رمز الدخول (الصفحة تجدده بنفسها) ثم نحاول مرة أخرى
+        const getJson = async url => {
+          let last = '';
+          for (let attempt = 0; attempt < 3; attempt++) {
+            try {
+              const res = await fetch(url, { headers: { Authorization: 'Bearer ' + token, Accept: 'application/json, text/plain, */*' } });
+              if (res.ok) return await res.json();
+              last = 'HTTP ' + res.status;
+              if (res.status === 401) { await sleep(900); token = emisToken() || token; continue; }
+              if (res.status === 403 || res.status === 404) break;
+            } catch (e) { if (e && e.isStop) throw e; last = String(e && e.message || e); }
+            await sleep(700 * (attempt + 1));
+          }
+          throw new Error(last || 'network');
+        };
         const sm = location.pathname.match(/schools\/(\d+)/) || location.pathname.match(/entities\/(\d+)/);
         const keys = new Set(), ids = new Set();
         let rows = 0, total = 0;
-        const per = 200;
+        // (v8.0.1) كل طلاب المدرسة بطلب واحد (3000 في الصفحة) كما في التطبيق الأول
+        const per = 3000;
         for (let page = 1; page <= 100; page++) {
           const q = new URLSearchParams({ page: String(page), rowsPerPage: String(per), sortBy: 'id', sortOrder: 'desc' });
           if (sm) q.set('entityId', sm[1]);
-          const res = await fetch('/api/student/getstudents?' + q, { headers: { Authorization: 'Bearer ' + token, Accept: 'application/json' } });
-          if (!res.ok) throw new Error('HTTP ' + res.status);
-          const j = await res.json();
+          const j = await getJson('/api/student/getstudents?' + q);
           const data = (j && j.data) || [];
           total = (j && j.meta && j.meta.totalCount) || total;
           for (const st of data) {
@@ -2932,7 +2947,8 @@
             if (tk.length >= 4) keys.add(norm(tk[0]) + norm(tk[1]) + norm(tk[2]) + norm(tk[3]));
           }
           prog({ done: false, rows, total });
-          if (!data.length || data.length < per || (total && rows >= total)) break;
+          // نتوقف عند اكتمال العدد (حتى لو أعاد الخادم أقل من 3000 في الصفحة نكمل الصفحات)
+          if (!data.length || (total ? rows >= total : data.length < per)) break;
         }
         prog({ done: true, keys: [...keys], ids: [...ids], rows, total, api: true });
       } catch (e) {
