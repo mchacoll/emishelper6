@@ -6,6 +6,8 @@ export type Settings = {
   desktopEmis: boolean; // عرض EMIS بعرض شاشة الكمبيوتر
   autoFillNext: boolean; // بعد «تمت المراجعة»: فتح «جديد» في EMIS وتعبئته تلقائياً
   showPageBar: boolean; // إظهار الشريط الأزرق داخل الصفحات (القديم)
+  autoPilot: boolean; // الإضافة التلقائية: مراقبة موقع الطلاب وإدخال كل استمارة جديدة في EMIS
+  autoPilotMinutes: number; // كل كم دقيقة يُفحص موقع الطلاب
   onboarded: boolean;
 };
 
@@ -17,6 +19,8 @@ export const DEFAULT_SETTINGS: Settings = {
   desktopEmis: false,
   autoFillNext: false,
   showPageBar: false,
+  autoPilot: false,
+  autoPilotMinutes: 2,
   onboarded: false,
 };
 

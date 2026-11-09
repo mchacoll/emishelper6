@@ -15,7 +15,14 @@ export type Student = {
   reviewed?: boolean;
 };
 
-export type Phase = 'idle' | 'filling' | 'opening' | 'saved' | 'incomplete' | 'stopped' | 'info';
+export type Phase = 'idle' | 'filling' | 'opening' | 'saved' | 'incomplete' | 'stopped' | 'info' | 'checking';
+
+export type AutoPilotInfo = {
+  enabled: boolean;
+  paused: boolean;
+  note: string; // آخر فحص / سبب التوقف
+  count: number; // عدد الطلاب الذين أُضيفوا في هذه الجلسة
+};
 
 const PHASE: Record<Phase, { label: string; icon: IconName; fg: string; bg: string }> = {
   idle: { label: 'جاهز', icon: 'circle-outline', fg: colors.blue, bg: colors.blueSoft },
@@ -25,6 +32,7 @@ const PHASE: Record<Phase, { label: string; icon: IconName; fg: string; bg: stri
   incomplete: { label: 'يحتاج إكمال', icon: 'alert-circle', fg: colors.red, bg: colors.redSoft },
   stopped: { label: 'متوقف', icon: 'stop-circle', fg: colors.red, bg: colors.redSoft },
   info: { label: 'جاهز للتعبئة', icon: 'information', fg: colors.blue, bg: colors.blueSoft },
+  checking: { label: 'فحص الاستمارات', icon: 'radar', fg: colors.orange, bg: colors.orangeSoft },
 };
 
 export function ControlPanel(props: {
@@ -38,11 +46,37 @@ export function ControlPanel(props: {
   onStop: () => void;
   onDone: () => void;
   onSkip: () => void;
+  autoPilot: AutoPilotInfo;
+  onToggleAutoPilot: () => void;
 }) {
   const [collapsed, setCollapsed] = useState(false);
   const [showLog, setShowLog] = useState(false);
   const [logTab, setLogTab] = useState<'emis' | 'site'>('emis');
-  const busy = props.phase === 'filling' || props.phase === 'opening';
+  const busy = props.phase === 'filling' || props.phase === 'opening' || props.phase === 'checking';
+  const ap = props.autoPilot;
+  const apStrip = ap.enabled ? (
+    <View style={[styles.apStrip, { backgroundColor: ap.paused ? colors.redSoft : colors.greenSoft }]}>
+      <Icon name={ap.paused ? 'robot-off-outline' : 'robot-outline'} size={20} color={ap.paused ? colors.red : colors.green} />
+      <View style={{ flex: 1 }}>
+        <T bold style={{ fontSize: 12, color: ap.paused ? colors.red : colors.green }}>
+          {ap.paused ? 'الإضافة التلقائية متوقفة' : 'الإضافة التلقائية تعمل'}
+          {ap.count ? ` · أُضيف ${ap.count}` : ''}
+        </T>
+        {ap.note ? (
+          <T style={{ fontSize: 11, color: colors.muted }} numberOfLines={2}>
+            {ap.note}
+          </T>
+        ) : null}
+      </View>
+      <Button
+        kind={ap.paused ? 'primary' : 'ghost'}
+        icon={ap.paused ? 'play' : 'pause'}
+        label={ap.paused ? 'استئناف' : 'إيقاف مؤقت'}
+        onPress={props.onToggleAutoPilot}
+        compact
+      />
+    </View>
+  ) : null;
   const ph = PHASE[props.phase];
   const s = props.student;
   const fullName = s ? [s.name, s.father, s.grandfather].filter(Boolean).join(' ') : '';
@@ -80,6 +114,7 @@ export function ControlPanel(props: {
   if (collapsed) {
     return (
       <View style={[styles.sheet, styles.sheetCollapsed]}>
+        {apStrip}
         <Pressable style={styles.collapsedRow} onPress={() => setCollapsed(false)}>
           {badge}
           <T bold style={{ flex: 1, fontSize: 14 }} numberOfLines={1}>
@@ -104,6 +139,8 @@ export function ControlPanel(props: {
       <Pressable onPress={() => setCollapsed(true)} hitSlop={8} style={styles.handleWrap}>
         <View style={styles.handle} />
       </Pressable>
+
+      {apStrip}
 
       {/* بطاقة الطالب */}
       <View style={styles.studentRow}>
@@ -210,6 +247,14 @@ const styles = StyleSheet.create({
     borderRadius: 999,
   },
   detail: { borderRadius: radius.md, paddingHorizontal: 12, paddingVertical: 8 },
+  apStrip: {
+    flexDirection: ROW,
+    alignItems: 'center',
+    gap: 10,
+    borderRadius: radius.md,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+  },
   actions: { flexDirection: ROW, gap: 8 },
   logHead: {
     flexDirection: ROW,

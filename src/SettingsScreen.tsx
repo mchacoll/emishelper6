@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Alert, Modal, ScrollView, StyleSheet, TextInput, View } from 'react-native';
+import { Alert, Modal, Pressable, ScrollView, StyleSheet, TextInput, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { normUrl, type Settings } from './settings';
@@ -38,6 +38,48 @@ export function SettingsScreen(props: {
           </T>
         </View>
         <ScrollView style={{ backgroundColor: colors.bg }} contentContainerStyle={{ padding: 16, gap: 8, paddingBottom: 40 }}>
+          <SectionTitle>الإضافة التلقائية</SectionTitle>
+          <Card>
+            <SettingRow
+              icon="robot-outline"
+              title="إضافة الاستمارات الجديدة إلى EMIS تلقائياً"
+              subtitle="يفحص موقع الطلاب كل فترة، ويُدخل كل طالب ليس عليه «تمت المراجعة» في EMIS ويحفظه ثم يحدده «تمت المراجعة». يعمل والتطبيق مفتوح وأنت مسجّل الدخول في EMIS، ويتوقف عند أي حقل ناقص."
+              value={d.autoPilot}
+              onChange={v => {
+                if (!v) return set('autoPilot', false);
+                Alert.alert(
+                  'تفعيل الإضافة التلقائية',
+                  'سيُدخل التطبيق الطلاب في EMIS الحقيقي ويحفظهم بدون مراجعتك لكل طالب. تأكد أن التعبئة تعمل صحيحاً على طالب واحد أولاً.',
+                  [
+                    { text: 'إلغاء', style: 'cancel' },
+                    { text: 'تفعيل', onPress: () => set('autoPilot', true) },
+                  ],
+                );
+              }}
+              last={!d.autoPilot}
+            />
+            {d.autoPilot ? (
+              <View style={{ padding: 14, gap: 8 }}>
+                <T bold style={{ fontSize: 13 }}>
+                  الفحص كل
+                </T>
+                <View style={{ flexDirection: ROW, gap: 8 }}>
+                  {[1, 2, 5, 10].map(m => (
+                    <Pressable
+                      key={m}
+                      onPress={() => set('autoPilotMinutes', m)}
+                      style={[styles.chip, d.autoPilotMinutes === m && styles.chipOn]}
+                    >
+                      <T bold style={{ fontSize: 13, color: d.autoPilotMinutes === m ? '#fff' : colors.navy, textAlign: 'center' }}>
+                        {m === 1 ? 'دقيقة' : m === 2 ? 'دقيقتين' : `${m} دقائق`}
+                      </T>
+                    </Pressable>
+                  ))}
+                </View>
+              </View>
+            ) : null}
+          </Card>
+
           <SectionTitle>طريقة العمل</SectionTitle>
           <Card>
             <SettingRow
@@ -181,5 +223,14 @@ const styles = StyleSheet.create({
     textAlign: 'left',
     fontFamily: fonts.regular,
   },
+  chip: {
+    flex: 1,
+    paddingVertical: 8,
+    borderRadius: radius.md,
+    borderWidth: 1,
+    borderColor: colors.border,
+    backgroundColor: colors.bg,
+  },
+  chipOn: { backgroundColor: colors.navy, borderColor: colors.navy },
   errBox: { backgroundColor: colors.bg, borderRadius: radius.md, padding: 10, gap: 4 },
 });

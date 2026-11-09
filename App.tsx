@@ -1,6 +1,7 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as Clipboard from 'expo-clipboard';
 import { useFonts } from 'expo-font';
+import { activateKeepAwakeAsync, deactivateKeepAwake } from 'expo-keep-awake';
 import { StatusBar } from 'expo-status-bar';
 import { type RefObject, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ActivityIndicator, BackHandler, Pressable, Share, StyleSheet, ToastAndroid, View } from 'react-native';
@@ -16,7 +17,7 @@ import {
   remoteSetJs,
   syncAndBootJs,
 } from './src/bridge';
-import { ControlPanel, type Phase, type Student } from './src/ControlPanel';
+import { type AutoPilotInfo, ControlPanel, type Phase, type Student } from './src/ControlPanel';
 import { Onboarding } from './src/Onboarding';
 import { DEFAULT_SETTINGS, normUrl, type Settings } from './src/settings';
 import { type LogLine, SettingsScreen } from './src/SettingsScreen';
@@ -31,6 +32,8 @@ const K_STORE = 'gm_store_v1';
 const K_DATA = 'emis_student_v2';
 const K_CMD = 'emis_cmd_v2';
 const K_STATUS = 'emis_status_v2';
+const K_AUTO_REVIEW = 'emis_auto_review';
+const K_CHAIN = 'emis_chain_new_v3';
 const DESKTOP_WIDTH = 1280;
 
 // نصوص أزرار شريط السكربت (نضغطها من لوحة التطبيق)
@@ -44,6 +47,12 @@ const toast = (t: string) => {
     /* ignore */
   }
 };
+
+const keyOf = (d: Student | null) => (d ? [d.name, d.father, d.grandfather].map(x => (x || '').replace(/\s+/g, '')).join('|') : '');
+const hhmm = () => new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+
+/* الإضافة التلقائية: مراحل الدورة الواحدة */
+type Stage = 'none' | 'reloading' | 'opening' | 'running';
 
 const parseStudent = (raw: unknown): Student | null => {
   if (typeof raw !== 'string' || !raw) return null;
@@ -94,6 +103,27 @@ function Main() {
   const settingsRef = useRef(settings);
   settingsRef.current = settings;
 
+  /* ---------- الإضافة التلقائية ---------- */
+  const [apPaused, setApPaused] = useState(false);
+  const [apNote, setApNote] = useState('');
+  const [apCount, setApCount] = useState(0);
+  const apPausedRef = useRef(false);
+  apPausedRef.current = apPaused;
+  const cycle = useRef<{ stage: Stage; t: number }>({ stage: 'none', t: 0 });
+  const processed = useRef(new Set<string>());
+  const lastActivity = useRef(0);
+  const phaseRef = useRef<Phase>('idle');
+  phaseRef.current = phase;
+  const apRunning = () => settingsRef.current.autoPilot && !apPausedRef.current;
+
+  const pauseAutoPilot = (reason: string) => {
+    cycle.current = { stage: 'none', t: 0 };
+    setApPaused(true);
+    apPausedRef.current = true;
+    setApNote(reason);
+    toast('توقفت الإضافة التلقائية: ' + reason);
+  };
+
   /* ---------- تحميل الإعدادات والقيم المحفوظة ---------- */
   useEffect(() => {
     (async () => {
@@ -134,6 +164,71 @@ function Main() {
     setErrors(prev => [...prev.slice(-199), { t: Date.now(), pane, level, msg }]);
   }, []);
 
+  /** إرسال أمر للسكربت في EMIS (نفس ما يرسله موقع الطلاب) */
+  const sendCmd = (mode: 'new' | 'both') => {
+    const v = JSON.stringify({ mode, t: Date.now() });
+    store.current[K_STATUS] = '';
+    store.current[K_CMD] = v;
+    persistStore();
+    emisRef.current?.injectJavaScript(remoteSetJs(K_STATUS, ''));
+    emisRef.current?.injectJavaScript(remoteSetJs(K_CMD, v));
+    setPhase('filling');
+    setDetail('');
+    if (settingsRef.current.autoSwitch && !settingsRef.current.split) setActive('emis');
+  };
+
+  /** بداية دورة: تحديث موقع الطلاب ثم فتح أول طالب غير مراجَع */
+  const startCycle = () => {
+    cycle.current = { stage: 'reloading', t: Date.now() };
+    lastActivity.current = Date.now();
+    setPhase('checking');
+    setDetail('فحص موقع الطلاب بحثاً عن استمارات جديدة...');
+    if (settingsRef.current.autoSwitch && !settingsRef.current.split) setActive('site');
+    setReloadKey(k => ({ ...k, site: k.site + 1 }));
+  };
+
+  const endCycleIdle = (note: string) => {
+    cycle.current = { stage: 'none', t: 0 };
+    lastActivity.current = Date.now();
+    setApNote(note);
+    setPhase('idle');
+    setDetail('');
+  };
+
+  // نتيجة «التالي» في موقع الطلاب أثناء الدورة
+  const onSiteBarDuringCycle = (log: string) => {
+    const c = cycle.current;
+    if (c.stage === 'reloading') {
+      const wait = 1500 - (Date.now() - c.t);
+      if (wait > 0) {
+        setTimeout(() => onSiteBarDuringCycle(log), wait);
+        return;
+      }
+      cycle.current = { stage: 'opening', t: Date.now() };
+      runAction('skip', 'site');
+      return;
+    }
+    if (c.stage !== 'opening') return;
+    const t = log.trim();
+    if (t.startsWith('⚠️') || t.startsWith('❌')) {
+      endCycleIdle(`لا توجد استمارات جديدة · آخر فحص ${hhmm()}`);
+      return;
+    }
+    if (!t.startsWith('✔')) return;
+    const d = parseStudent(store.current[K_DATA]);
+    if (!d || d.reviewed) {
+      endCycleIdle(`لا توجد استمارات جديدة · آخر فحص ${hhmm()}`);
+      return;
+    }
+    if (processed.current.has(keyOf(d))) {
+      pauseAutoPilot(`الطالب ${d.name} ${d.father || ''} أُضيف سابقاً ولم يُحدَّد «تمت المراجعة» — تحقق منه`);
+      return;
+    }
+    cycle.current = { stage: 'running', t: Date.now() };
+    setApNote(`جارٍ إضافة: ${d.name} ${d.father || ''}`);
+    sendCmd('new');
+  };
+
   /* ---------- ضغط أزرار السكربت من اللوحة ---------- */
   const runAction = useCallback((action: Action, pane: Pane) => {
     views[pane].current?.injectJavaScript(clickBarJs(`${action}:${pane}`, BAR[action]));
@@ -141,7 +236,10 @@ function Main() {
   }, []);
 
   const onAction = (action: Action) => {
-    if (action === 'stop') runAction('stop', 'emis');
+    if (action === 'stop') {
+      runAction('stop', 'emis');
+      if (settingsRef.current.autoPilot && !apPausedRef.current) pauseAutoPilot('أوقفتها بزر الإيقاف');
+    }
     else runAction(action, 'site');
     if (action === 'done') toast('تحديد «تمت المراجعة» والانتقال للطالب التالي...');
     if (action === 'skip') toast('الانتقال للطالب التالي غير المراجَع...');
@@ -198,10 +296,15 @@ function Main() {
           return;
         case 'bar':
           setBarLog(prev => (prev[pane] === m.log ? prev : { ...prev, [pane]: m.log }));
+          if (pane === 'site' && apRunning()) onSiteBarDuringCycle(m.log);
           return;
         case 'act': {
           if (m.ok) return;
           const [action, from] = m.action.split(':') as [Action, Pane];
+          if (action === 'skip' && cycle.current.stage === 'opening') {
+            endCycleIdle(`تعذّر فتح قائمة الطلاب في موقعك · آخر فحص ${hhmm()}`);
+            return;
+          }
           // لا توجد صفحة طالب مفتوحة في موقعك: «تعبئة» و«ص2» تعملان من EMIS بآخر طالب محفوظ
           if ((action === 'fill' || action === 'page2') && from === 'site') {
             runAction(action, 'emis');
@@ -225,10 +328,23 @@ function Main() {
           let v = m.v;
           // بعد «تمت المراجعة» يطلب الموقع فتح «جديد» فقط (newOnly).
           // إن فُعّل «تعبئة الطالب التالي تلقائياً» نحوّله إلى «جديد + تعبئة» (new) الموجود في السكربت.
-          if (m.k === K_CMD && pane === 'site' && settingsRef.current.autoFillNext && typeof v === 'string') {
+          if (m.k === K_CMD && pane === 'site' && (settingsRef.current.autoFillNext || apRunning()) && typeof v === 'string') {
             try {
               const cmd = JSON.parse(v);
-              if (cmd && cmd.mode === 'newOnly') v = JSON.stringify({ ...cmd, mode: 'new' });
+              if (cmd && cmd.mode === 'newOnly') {
+                const d = parseStudent(store.current[K_DATA]);
+                if (apRunning() && d && processed.current.has(keyOf(d))) {
+                  // حماية من التكرار: لا نُدخل نفس الطالب مرتين
+                  store.current[m.k] = v;
+                  pauseAutoPilot(`الطالب ${d.name} ${d.father || ''} أُضيف سابقاً — تحقق منه`);
+                  return;
+                }
+                v = JSON.stringify({ ...cmd, mode: 'new' });
+                if (apRunning()) {
+                  cycle.current = { stage: 'running', t: Date.now() };
+                  if (d) setApNote(`جارٍ إضافة: ${d.name} ${d.father || ''}`);
+                }
+              }
             } catch {
               /* ignore */
             }
@@ -237,6 +353,25 @@ function Main() {
           persistStore();
           other?.injectJavaScript(remoteSetJs(m.k, v));
           applyStatus(m.k, v, pane);
+          if (m.k === K_STATUS && pane === 'emis' && typeof v === 'string' && v) {
+            lastActivity.current = Date.now();
+            if (apRunning() && cycle.current.stage === 'running') {
+              try {
+                const st = JSON.parse(v);
+                if (st.saved && !(st.miss && st.miss.length)) {
+                  const d = parseStudent(store.current[K_DATA]);
+                  if (d) processed.current.add(keyOf(d));
+                  setApCount(c => c + 1);
+                  setApNote(`آخر إضافة: ${d ? `${d.name} ${d.father || ''}` : ''} · ${hhmm()}`);
+                  cycle.current = { stage: 'none', t: 0 };
+                } else if (!st.info) {
+                  pauseAutoPilot(st.stopped ? (st.miss && st.miss[0]) || 'تم الإيقاف' : 'حقول ناقصة: ' + (st.miss || []).join('، '));
+                }
+              } catch {
+                /* ignore */
+              }
+            }
+          }
 
           // التبديل التلقائي بين النافذتين (في وضع التبويبات فقط)
           const s = settingsRef.current;
@@ -264,6 +399,52 @@ function Main() {
     },
     [],
   );
+
+  /* ---------- مؤقت الإضافة التلقائية ---------- */
+  useEffect(() => {
+    if (!settings.autoPilot) {
+      cycle.current = { stage: 'none', t: 0 };
+      return;
+    }
+    // السكربت: تحديد «تمت المراجعة» تلقائياً بعد الحفظ + فتح «جديد» للطالب التالي
+    for (const [k, v] of [[K_AUTO_REVIEW, true], [K_CHAIN, true]] as const) {
+      store.current[k] = v;
+      siteRef.current?.injectJavaScript(remoteSetJs(k, v));
+    }
+    persistStore();
+    activateKeepAwakeAsync('autopilot').catch(() => {});
+    const iv = setInterval(() => {
+      if (apPausedRef.current) return;
+      const c = cycle.current;
+      const now = Date.now();
+      if (c.stage === 'none') {
+        const busy = phaseRef.current === 'filling' || phaseRef.current === 'opening';
+        if (!busy && now - lastActivity.current >= settingsRef.current.autoPilotMinutes * 60000) startCycle();
+      } else if ((c.stage === 'reloading' || c.stage === 'opening') && now - c.t > 45000) {
+        endCycleIdle(`تعذّر فتح موقع الطلاب · آخر محاولة ${hhmm()}`);
+      } else if (c.stage === 'running' && now - c.t > 8 * 60000) {
+        pauseAutoPilot('انتهت المهلة دون حفظ الطالب');
+      }
+    }, 4000);
+    return () => {
+      clearInterval(iv);
+      deactivateKeepAwake('autopilot').catch(() => {});
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [settings.autoPilot]);
+
+  const toggleAutoPilot = () => {
+    if (apPausedRef.current) {
+      setApPaused(false);
+      apPausedRef.current = false;
+      setApNote('استؤنفت · سيبدأ الفحص الآن');
+      lastActivity.current = 0;
+      cycle.current = { stage: 'none', t: 0 };
+    } else {
+      pauseAutoPilot('أوقفتها يدوياً');
+    }
+  };
+  const autoPilotInfo: AutoPilotInfo = { enabled: settings.autoPilot, paused: apPaused, note: apNote, count: apCount };
 
   /* ---------- زر الرجوع في أندرويد ---------- */
   useEffect(() => {
@@ -425,6 +606,8 @@ function Main() {
             onStop={() => onAction('stop')}
             onDone={() => onAction('done')}
             onSkip={() => onAction('skip')}
+            autoPilot={autoPilotInfo}
+            onToggleAutoPilot={toggleAutoPilot}
           />
         </SafeAreaView>
       </View>
@@ -435,6 +618,12 @@ function Main() {
         errors={errors}
         onClose={() => setShowSettings(false)}
         onSave={s => {
+          if (s.autoPilot && !settingsRef.current.autoPilot) {
+            setApPaused(false);
+            apPausedRef.current = false;
+            lastActivity.current = 0;
+            setApNote('سيبدأ الفحص الآن');
+          }
           saveSettings(s);
           setShowSettings(false);
           toast('تم حفظ الإعدادات');
