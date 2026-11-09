@@ -845,16 +845,16 @@
     return '';
   }
 
-  function typeWords(c) {
+  function typeWords(c, coreFirst) {
     const src = typeof c === 'string' ? c : (c && (c.typeHint || c.label)) || '';
     const s = clean(String(src));
     if (!s) return [];
     // (v7.7.1) الكلمة المميزة أولاً (تتحمل اختلاف الكتابة)، ثم النص كاملاً، ثم بدون همزة/«ال»
     const words = s.split(/[\s/،,\-]+/).filter(w => w.length >= 3).sort((a, b) => b.length - a.length);
     const out = [];
-    // (v7.7.2) أولاً جزء الكلمة الذي لا يتأثر بالهمزة و«ال» (أنثى ← نثى، الإسلام ← سلام)
+    // (v7.7.2، للجنس فقط) أولاً جزء الكلمة الذي لا يتأثر بالهمزة (أنثى ← نثى)
     //          فيطابق «أنثى» و«انثى» معاً من أول مرة
-    if (words[0]) {
+    if (coreFirst && words[0]) {
       const core = words[0].replace(/^ال/, '').replace(/^[أإآا]/, '').split(/[أإآ]/).sort((a, b) => b.length - a.length)[0] || '';
       if (core.length >= 3 && core !== words[0]) out.push(core);
     }
@@ -883,7 +883,7 @@
     if (canType && (flags.typeSearch || searchy)) {
       let first = true;
       for (const c of cands) {
-        for (const w of typeWords(c)) {
+        for (const w of typeWords(c, flags.coreFirst)) {
           try { ctrl.focus?.(); } catch { /* ignore */ }
           press(ctrl);
           await sleep(searchy ? 80 : 250);
@@ -1836,7 +1836,8 @@
       { l: ['رقم البطاقة الوطنية الموحدة', 'رقم البطاقة الوطنية'], v: isCivil(d) ? null : d.nationalId, kind: 'text' },
       // (v7.7) الجنس من معلومات الطالب/الطالبة: يضغط «ذكر» أو «أنثى»، وإن فشل يكتبها ثم يضغط عليها
       // (v7.7.1) الجنس مثل باقي القوائم: يكتب «ذكر» أو «أنثى» (بالهمزة) ثم يضغط على الخيار
-      { l: ['الجنس'], v: genderCandidates(d.gender, d.school), kind: 'select' },
+      // (v7.7.2) خاص بالجنس فقط: يكتب «نثى» فيطابق «أنثى» و«انثى» من أول مرة، وإن كان مختاراً صحيحاً لا يُعاد
+      { l: ['الجنس'], v: genderCandidates(d.gender, d.school), kind: 'select', coreFirst: true, keepIfSet: true },
       // (v7.6) الجنسية: يكتب «العراق» ثم ينتظر ظهورها ويضغط عليها (احتياط: «العراقية»)
       { l: ['الجنسية'], v: ['العراق', 'العراقية'], kind: 'select', typeSearch: true },
       { l: ['اللغة الأم'], v: langCandidates(d.motherTongue), kind: 'select' },
@@ -1886,7 +1887,7 @@
       const ctrl = (item.find ? await item.find() : null) || await findControlBest(item.l);
       if (!ctrl) { failed.push(item); log(`✖ ${item.l[0]} (لا يوجد حقل)`); continue; }
       // (v7.7.2) القائمة تعرض القيمة الصحيحة مسبقاً: نتركها ولا نعيد الكتابة والاختيار
-      const pre = item.kind === 'select' && !item.secRaw ? alreadyChosen(ctrl, value) : '';
+      const pre = item.keepIfSet ? alreadyChosen(ctrl, value) : '';
       if (pre) { ok++; log(`✔ ${item.l[0]} ← ${pre} (موجود)`); await sleep(DELAY); continue; }
       let done = false;
       lastChosen = '';
