@@ -1,7 +1,7 @@
 // ==UserScript==
-// @name         مساعد EMIS – تعبئة تلقائية (v7.6.3)
+// @name         مساعد EMIS – تعبئة تلقائية (v7.6.4)
 // @namespace    emis-helper
-// @version      7.6.3
+// @version      7.6.4
 // @description  تعبئة تلقائية لـ EMIS + حفظ + «تمت المراجعة» + فتح «جديد» + نقل «الاحتياجات الخاصة» من EMIS إلى موقعك
 // @match        *://*/*
 // @grant        GM_setValue
@@ -22,8 +22,8 @@
   const DATE_FORMAT = 'YYYY-MM-DD';
   const IS_TOUCH = (() => { try { return matchMedia('(pointer:coarse)').matches; } catch { return false; } })();
   // السرعة: ارفع الأرقام لتصبح أبطأ (بالميلي ثانية)
-  const DELAY = IS_TOUCH ? 180 : 90;     // الانتظار بين كل حقل والذي يليه
-  const TYPE_DELAY = 10;                  // الانتظار بين كل حرف وآخر أثناء الكتابة
+  const DELAY = IS_TOUCH ? 70 : 50;      // الانتظار بين كل حقل والذي يليه (v7.6.4: أسرع)
+  const TYPE_DELAY = 4;                   // الانتظار بين كل حرف وآخر أثناء الكتابة
 
   // false = القوائم تُختار بالضغط فقط ولا يُكتب فيها نص أبداً
   // (الحقول التي تحمل typeSearch: true مثل الجنسية تكتب دائماً ثم تضغط على النتيجة)
@@ -315,7 +315,7 @@
     ui.dir = 'rtl';
 
     const head = mk('div', 'display:flex;justify-content:space-between;align-items:center;gap:8px');
-    head.appendChild(mk('b', 'font-size:13.5px;', title + ' v7.6.3'));
+    head.appendChild(mk('b', 'font-size:13.5px;', title + ' v7.6.4'));
     const minBtn = mk('button',
       'background:none;border:0;color:#fff;font-size:22px;' +
       'min-width:32px;min-height:32px;cursor:pointer;padding:0;line-height:1;', '−');
@@ -697,7 +697,7 @@
     const rows = [];
     for (const el of document.querySelectorAll(OPT2)) {
       if (inUI(el) || !vis(el) || el.children.length >= 4) continue;
-      // (v7.6.3) ليست خيارات: حقول الاستمارة المجاورة وعناوينها
+      // (v7.6.4) ليست خيارات: حقول الاستمارة المجاورة وعناوينها
       if (el.closest('.q-field,label,mat-form-field') || el.querySelector('input,select,textarea')) continue;
       const text = clean(el.textContent);
       if (!text || text.length > 60) continue;
@@ -709,7 +709,7 @@
       if (!overlapX || !(below || above)) continue;
       rows.push({ el, text, d: Math.min(Math.abs(o.top - a.bottom), Math.abs(a.top - o.bottom)) });
     }
-    // (v7.6.3) على الهاتف قد تُفتح القائمة بعيداً عن الحقل (نافذة أعلى الصفحة أو وسطها).
+    // (v7.6.4) على الهاتف قد تُفتح القائمة بعيداً عن الحقل (نافذة أعلى الصفحة أو وسطها).
     // إن كانت هناك قائمة منسدلة مفتوحة نأخذ خياراتها هي أولاً، لا نصوص الحقول المجاورة
     const near = rows.splice(0);
     {
@@ -730,7 +730,7 @@
       .sort((x, y) => x.d - y.d);
   }
 
-  // (v7.6.3) القوائم المنسدلة المفتوحة حالياً (PrimeVue / PrimeNG / Material / Vuetify / Element ...)
+  // (v7.6.4) القوائم المنسدلة المفتوحة حالياً (PrimeVue / PrimeNG / Material / Vuetify / Element ...)
   const OVERLAY_SEL = '[role=listbox],.q-menu,.q-dialog__inner,.q-select__dialog,.q-virtual-scroll__content,.p-select-overlay,.p-dropdown-panel,.p-multiselect-overlay,.p-multiselect-panel,' +
     '.p-autocomplete-overlay,.p-autocomplete-panel,.p-overlay,.p-connected-overlay,.cdk-overlay-pane,.mat-mdc-select-panel,' +
     '.ng-dropdown-panel,.select2-dropdown,.v-overlay__content,.v-menu,.el-select-dropdown,.el-popper,' +
@@ -757,10 +757,10 @@
   }
 
   // ننتظر ظهور القائمة الحقيقية ثم نختار الخيار المطلوب
-  async function readAndPick(anchor, cands, tries) {
+  async function readAndPick(anchor, cands, tries, step = 110) {
     let opts = [], best = null;
     for (let i = 0; i < tries; i++) {
-      await sleep(110);
+      await sleep(step);
       opts = gatherOptions(anchor);
       if (opts.length) lastOptsTxt = opts.slice(0, 8).map(o => o.text).join(' | ');
       best = opts.length ? pickOption(opts, cands) : null;
@@ -799,10 +799,10 @@
       const s = shownValue(ctrl, anchor); return !s || s.includes(want);
     };
     const settled = () => !isOpen() && isSet();
-    const finish = async () => { const ok = await waitUntil(settled, 1600, 100); if (ok) lastChosen = best.text; return ok; };
+    const finish = async () => { const ok = await waitUntil(settled, 1600, 60); if (ok) lastChosen = best.text; return ok; };
 
     try { best.el.scrollIntoView?.({ block: 'nearest' }); } catch { /* ignore */ }
-    await sleep(120);
+    await sleep(40);
 
     press(best.el);
     if (await finish()) return true;
@@ -822,14 +822,16 @@
     return false;
   }
 
-  // (v7.6.3) ما نكتبه في قائمة البحث: النص كاملاً، ثم أطول كلمة فيه (لو اختلفت الكتابة قليلاً في EMIS)
+  // (v7.6.4) ما نكتبه في قائمة البحث: النص كاملاً، ثم أطول كلمة فيه (لو اختلفت الكتابة قليلاً في EMIS)
   function typeWords(c) {
     const src = typeof c === 'string' ? c : (c && (c.typeHint || c.label)) || '';
     const s = clean(String(src));
     if (!s) return [];
-    const out = [s];
+    // (v7.6.4) الكلمة المميزة أولاً (تتحمل اختلاف الكتابة)، ثم النص كاملاً، ثم بدون همزة/«ال»
     const words = s.split(/[\s/،,\-]+/).filter(w => w.length >= 3).sort((a, b) => b.length - a.length);
-    if (words[0] && words[0] !== s) out.push(words[0]);
+    const out = [];
+    if (words[0]) out.push(words[0]);
+    if (!out.includes(s)) out.push(s);
     const plain = (words[0] || s).replace(/[أإآ]/g, 'ا').replace(/^ال/, '');
     if (plain.length >= 3 && !out.includes(plain)) out.push(plain);
     return out;
@@ -841,23 +843,26 @@
     let anchor = ctrl.closest(WRAP_SEL) || ctrl;
     if (anchor.getBoundingClientRect().height > 120) anchor = ctrl;
     // (v7.6) الحقول التي تحمل typeSearch (مثل الجنسية) تكتب النص ثم تضغط على النتيجة
-    // (v7.6.3) قوائم البحث (مثل قوائم EMIS: حقل كتابة role=combobox) لا تفتح بالضغط: نكتب ثم نضغط دائماً
+    // (v7.6.4) قوائم البحث (مثل قوائم EMIS: حقل كتابة role=combobox) لا تفتح بالضغط: نكتب ثم نضغط دائماً
     const searchy = isTextInput(ctrl) && !ctrl.readOnly &&
       (ctrl.getAttribute('aria-autocomplete') === 'list' || ctrl.type === 'search' || /q-field__input|q-select/.test(String(ctrl.className)));
     const canType = (ALLOW_TYPE_IN_LISTS || flags.typeSearch || searchy) && isTextInput(ctrl) && !ctrl.readOnly;
     try { ctrl.scrollIntoView?.({ block: 'center' }); } catch { /* ignore */ }
-    await sleep(200);
+    await sleep(searchy ? 60 : 200);
     await closeLists();
 
     // (v7.6) كتابة النص أولاً، انتظار ظهوره في القائمة، ثم الضغط عليه (الجنسية: «العراق»)
     if (canType && (flags.typeSearch || searchy)) {
+      let first = true;
       for (const c of cands) {
         for (const w of typeWords(c)) {
           try { ctrl.focus?.(); } catch { /* ignore */ }
           press(ctrl);
-          await sleep(250);
+          await sleep(searchy ? 80 : 250);
           await typeInto(ctrl, w, true);
-          const { opts, best } = await readAndPick(anchor, [c], 14);
+          // (v7.6.4) أول مرة قد تجلب EMIS الخيارات من الخادم: ننتظر حتى 4 ثوانٍ (ونكمل فور ظهورها)
+          const { opts, best } = await readAndPick(anchor, [c], first ? 50 : 25, 80);
+          first = false;
           if (best && await commitOption(best, ctrl, anchor, opts.length === 1)) {
             if (IS_TOUCH) ctrl.blur?.();
             await sleep(150);
@@ -870,7 +875,8 @@
     }
 
     const arrow = anchor.querySelector('[class*=arrow],[class*=trigger],[class*=chevron],svg');
-    const triggers = [ctrl, anchor, arrow].filter((x, i, a) => x && a.indexOf(x) === i);
+    // (v7.6.4) قوائم البحث لا تفتح بالضغط: لا نضيّع الوقت في محاولات الضغط
+    const triggers = searchy ? [] : [ctrl, anchor, arrow].filter((x, i, a) => x && a.indexOf(x) === i);
 
     for (const trig of triggers) {
       try { ctrl.focus?.(); } catch { /* ignore */ }
@@ -940,7 +946,7 @@
       if (!(r.right > a.left - 20 && r.left < a.right + 20)) continue;
       out.push({ el: e, k, top: r.top });
     }
-    // (v7.6.3) احتياط للهاتف: الحروف داخل القائمة المفتوحة أينما ظهرت
+    // (v7.6.4) احتياط للهاتف: الحروف داخل القائمة المفتوحة أينما ظهرت
     if (!out.length) {
       for (const box of openOverlays()) {
         for (const e of box.querySelectorAll('*')) {
@@ -1010,7 +1016,10 @@
     };
     const done = how => { lastChosen = s + (how ? ' (' + how + ')' : ''); return true; };
 
-    for (let round = 0; round < 2; round++) {
+    // (v7.6.4) قائمة بحث (EMIS): الضغط لا يفتحها، ننتقل مباشرة للكتابة ثم الضغط (آخر الدالة)
+    const searchy = isTextInput(ctrl) && !ctrl.readOnly &&
+      (ctrl.getAttribute('aria-autocomplete') === 'list' || ctrl.type === 'search' || /q-field__input|q-select/.test(String(ctrl.className)));
+    for (let round = 0; round < (searchy ? 0 : 2); round++) {
       if (!(await open())) { await closeLists(); await sleep(300); continue; }
       const leaves = secLeaves(anchor);
       lastOptsTxt = leaves.map(o => o.el.textContent.trim()).join(' | ');
@@ -1069,7 +1078,7 @@
       await closeLists();
       try { ctrl.focus?.(); } catch { /* ignore */ }
       await typeInto(ctrl, s, true);
-      await sleep(600);
+      await waitUntil(() => secLeaves(anchor).some(o => o.k === k), 4000, 80);
       const hit = secLeaves(anchor).find(o => o.k === k);
       if (hit) {
         const row = hit.el.closest('li,[role=option],[class*=option],[class*=item]') || hit.el.parentElement || hit.el;
@@ -1229,8 +1238,12 @@
     await sleep(200);
     await closeLists();
 
+    // (v7.6.4) قوائم البحث (EMIS) لا تفتح بالضغط: نذهب مباشرة إلى الكتابة ثم الضغط
+    const searchy = isTextInput(ctrl) && !ctrl.readOnly &&
+      (ctrl.getAttribute('aria-autocomplete') === 'list' || ctrl.type === 'search' || /q-field__input|q-select/.test(String(ctrl.className)));
+
     // 1) فتح القائمة والضغط على الخيار المطلوب
-    for (let round = 0; round < 2; round++) {
+    for (let round = 0; round < (searchy ? 0 : 2); round++) {
       if (await open() && await clickWanted()) return done('');
       if (soft) {
         const v = await checkSoft();
@@ -1252,7 +1265,7 @@
         try { box.focus?.(); } catch { /* ignore */ }
         if (box === ctrl) { press(ctrl); await sleep(200); }
         await typeInto(box, w, true);
-        await waitUntil(() => !!findWanted(), 2500, 120);
+        await waitUntil(() => !!findWanted(), 4000, 80);
         noteOpts();
         if (await clickWanted()) return done('كتابة+ضغط');
         if (soft) break;

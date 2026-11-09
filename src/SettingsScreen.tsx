@@ -188,7 +188,7 @@ export function SettingsScreen(props: {
           />
 
           <T style={{ color: colors.muted, fontSize: 12, textAlign: 'center', marginTop: 12 }}>
-            مساعد EMIS · الإصدار 7.6.3
+            مساعد EMIS · الإصدار 7.6.4
           </T>
         </ScrollView>
       </SafeAreaView>
