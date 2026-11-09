@@ -1,5 +1,7 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as Clipboard from 'expo-clipboard';
+import * as DocumentPicker from 'expo-document-picker';
+import * as FileSystem from 'expo-file-system/legacy';
 import { useFonts } from 'expo-font';
 import { activateKeepAwakeAsync, deactivateKeepAwake } from 'expo-keep-awake';
 import { StatusBar } from 'expo-status-bar';
@@ -19,6 +21,8 @@ import {
   syncAndBootJs,
 } from './src/bridge';
 import { ControlPanel, type Phase, type QItem } from './src/ControlPanel';
+import { type ExcelResult, parseGeneric, parseWorkbook } from './src/excel';
+import { type ExcelData, ExcelScreen } from './src/ExcelScreen';
 import { Onboarding } from './src/Onboarding';
 import { type SyncState, SyncScreen } from './src/SyncScreen';
 import { UpdateModal } from './src/UpdateModal';
@@ -29,6 +33,7 @@ import { colors, ROW } from './src/theme';
 import { Icon, IconButton, type IconName, T } from './src/ui';
 
 type Pane = 'site' | 'emis';
+type Tab = Pane | 'excel';
 
 const APP_VERSION = installedVersion() || '7.7.1';
 const K_SETTINGS = 'app_settings_v1';
@@ -43,6 +48,8 @@ const K_QUEUE = 'emis_queue_v1';
 const K_SYNC = 'emis_sync_v1';
 const K_MARK = 'emis_mark_v1';
 const K_EXIST = 'emis_existing_v1';
+const K_GSTAT = 'emis_generic_status_v1';
+const K_EXCEL_APP = 'app_excel_v1';
 const DESKTOP_WIDTH = 1280;
 // متصفح كمبيوتر: EMIS يفتح القوائم المنسدلة تحت الحقل بدل نافذة ملء الشاشة الخاصة بالهاتف
 const DESKTOP_UA =
@@ -73,7 +80,7 @@ function Main() {
   });
   const [ready, setReady] = useState(false);
   const [settings, setSettings] = useState<Settings>(DEFAULT_SETTINGS);
-  const [active, setActive] = useState<Pane>('site');
+  const [active, setActive] = useState<Tab>('site');
   const [showSettings, setShowSettings] = useState(false);
   const [showGuide, setShowGuide] = useState(false);
   const [errors, setErrors] = useState<LogLine[]>([]);
@@ -101,6 +108,18 @@ function Main() {
   const syncStep = useRef<'none' | 'emis' | 'site'>('none');
   const existingRef = useRef<{ keys: string[]; ids: string[]; rows: number } | null>(null);
   const syncWarn = useRef('');
+  const pendingImport = useRef<(ExcelResult & { fileName: string }) | null>(null);
+  const [excel, setExcelState] = useState<ExcelData | null>(null);
+  const excelRef = useRef<ExcelData | null>(null);
+  const excelStudents = useRef<ExcelResult | null>(null);
+  const [excelBusy, setExcelBusy] = useState(false);
+  const setExcel = (fn: (e: ExcelData | null) => ExcelData | null) => {
+    const next = fn(excelRef.current);
+    excelRef.current = next;
+    setExcelState(next);
+    if (next) AsyncStorage.setItem(K_EXCEL_APP, JSON.stringify(next)).catch(() => {});
+    else AsyncStorage.removeItem(K_EXCEL_APP).catch(() => {});
+  };
   const [syncUI, setSyncUI] = useState<SyncState>({ visible: false, step: 'done', text: '', percent: 0 });
   const runAfterSync = useRef(false);
   const lastActivity = useRef(0);
@@ -112,7 +131,7 @@ function Main() {
   const emisRef = useRef<WebView>(null);
   const views: Record<Pane, RefObject<WebView | null>> = { site: siteRef, emis: emisRef };
   const canBack = useRef<Record<Pane, boolean>>({ site: false, emis: false });
-  const activeRef = useRef<Pane>('site');
+  const activeRef = useRef<Tab>('site');
   activeRef.current = active;
   const settingsRef = useRef(settings);
   settingsRef.current = settings;
@@ -155,6 +174,16 @@ function Main() {
           setQueueState(items);
         }
         if (dk) doneKeys.current = new Set(JSON.parse(dk) || []);
+      } catch {
+        /* ignore */
+      }
+      try {
+        const xr = await AsyncStorage.getItem(K_EXCEL_APP);
+        if (xr) {
+          const xd = JSON.parse(xr);
+          excelRef.current = xd;
+          setExcelState(xd);
+        }
       } catch {
         /* ignore */
       }
@@ -230,8 +259,9 @@ function Main() {
 
   /* ===================== المزامنة ===================== */
   // ١) قراءة طلاب EMIS الحقيقي  ٢) قراءة موقع الطلاب وتخطي الموجودين في EMIS
-  const startSync = (reloadFirst: boolean) => {
+  const startSync = (reloadFirst: boolean, forImport = false) => {
     if (syncingRef.current) return;
+    if (!forImport) pendingImport.current = null;
     syncingRef.current = true;
     syncReload.current = reloadFirst;
     existingRef.current = null;
@@ -240,7 +270,13 @@ function Main() {
     setDetail('');
     setSyncText('قراءة طلاب EMIS...');
     lastActivity.current = Date.now();
-    setSyncUI({ visible: !reloadFirst, step: 'emis', text: 'قراءة طلاب EMIS الحقيقي...', percent: 3 });
+    setSyncUI(u => ({
+      visible: !reloadFirst,
+      step: 'emis',
+      title: forImport ? u.title : 'مزامنة الطلاب',
+      text: 'قراءة طلاب EMIS الحقيقي...',
+      percent: forImport ? 10 : 3,
+    }));
     emisRef.current?.injectJavaScript(
       '(function(){var ok=!!window.__emisList;if(ok)window.__emisList();' +
         'try{window.ReactNativeWebView.postMessage(JSON.stringify({__gm:"act",action:"list:emis",ok:ok}))}catch(e){}})();true;',
@@ -255,6 +291,10 @@ function Main() {
     syncStep.current = 'emis';
   };
   const goSite = () => {
+    if (pendingImport.current) {
+      mergeImport();
+      return;
+    }
     syncStep.current = 'site';
     setSyncText('قراءة الطلاب من موقعك...');
     setSyncUI(u => ({ ...u, step: 'site', text: 'قراءة الطلاب من موقعك...', percent: 35 }));
@@ -313,6 +353,148 @@ function Main() {
     lastActivity.current = Date.now();
   };
 
+  /* ===================== استيراد ملف Excel ===================== */
+  const pickExcel = async () => {
+    let res: DocumentPicker.DocumentPickerResult;
+    try {
+      res = await DocumentPicker.getDocumentAsync({
+        type: [
+          'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+          'application/vnd.ms-excel',
+          'text/csv',
+          'text/comma-separated-values',
+          'application/octet-stream',
+        ],
+        copyToCacheDirectory: true,
+        multiple: false,
+      });
+    } catch {
+      toast('تعذّر فتح الملفات');
+      return;
+    }
+    if (res.canceled || !res.assets?.[0]) return;
+    const f = res.assets[0];
+    try {
+      const isCsv = /\.csv$/i.test(f.name || '') || /csv/i.test(f.mimeType || '');
+      const src = isCsv
+        ? { text: await FileSystem.readAsStringAsync(f.uri) }
+        : { base64: await FileSystem.readAsStringAsync(f.uri, { encoding: FileSystem.EncodingType.Base64 }) };
+      const g = parseGeneric(src);
+      let students: ExcelResult | null = null;
+      try {
+        students = parseWorkbook(src);
+      } catch {
+        students = null;
+      }
+      excelStudents.current = students;
+      setExcel(() => ({
+        fileName: f.name || 'ملف',
+        sheet: g.sheet,
+        headers: g.headers,
+        rows: g.rows.slice(0, 5000),
+        status: {},
+        selected: 0,
+        studentRows: students ? students.items.length : 0,
+      }));
+      toast(`قُرئ ${g.rows.length} صف من «${f.name}»`);
+    } catch (e) {
+      Alert.alert('تعذّرت قراءة الملف', (e as Error)?.message || '');
+    }
+  };
+
+  /** تعبئة النموذج المفتوح في EMIS من صف في الملف */
+  const fillExcelRow = (i: number) => {
+    const d = excelRef.current;
+    if (!d || !d.rows[i]) return;
+    const pairs = d.headers.map((h, j) => [h, d.rows[i][j] || '']).filter(([h, v]) => h && v);
+    setExcelBusy(true);
+    setActive('emis');
+    emisRef.current?.injectJavaScript(
+      '(function(){var ok=!!window.__emisFillGeneric;if(ok)window.__emisFillGeneric(' + JSON.stringify(pairs) + ',' + i + ');' +
+        'try{window.ReactNativeWebView.postMessage(JSON.stringify({__gm:"act",action:"generic:emis",ok:ok}))}catch(e){}})();true;',
+    );
+    setTimeout(() => setExcelBusy(false), 120000);
+  };
+  const onGenericStatus = (raw: string) => {
+    let r: { ok: number; miss: string[]; fail: string[]; row: number };
+    try {
+      r = JSON.parse(raw);
+    } catch {
+      return;
+    }
+    setExcelBusy(false);
+    setExcel(d =>
+      d ? { ...d, status: { ...d.status, [r.row]: { ok: r.ok, miss: r.miss || [], fail: r.fail || [], t: Date.now() } }, selected: r.fail?.length ? r.row : Math.min(d.rows.length - 1, r.row + 1) } : d,
+    );
+    toast(`Excel صف ${r.row + 1}: عُبّئ ${r.ok}` + (r.fail?.length ? ` · ✖ ${r.fail.length}` : '') + ' — راجع واحفظ في EMIS');
+  };
+  const addExcelStudents = () => {
+    const st = excelStudents.current;
+    const d = excelRef.current;
+    if (!st || !d) {
+      toast('ارفع الملف مرة أخرى لإضافة الطلاب');
+      return;
+    }
+    if (syncingRef.current || runningRef.current) return;
+    pendingImport.current = { ...st, fileName: d.fileName };
+    setSyncUI({ visible: true, step: 'emis', title: 'إضافة طلاب من Excel', text: 'قراءة طلاب EMIS الحقيقي...', percent: 5 });
+    startSync(false, true);
+  };
+
+  const mergeImport = () => {
+    const imp = pendingImport.current;
+    pendingImport.current = null;
+    if (!imp) return;
+    const exKeys = new Set(existingRef.current?.keys || []);
+    let added = 0;
+    let existing = 0;
+    setQueue(q => {
+      const next = [...q];
+      const byKey = new Map(next.map(i => [i.k, i]));
+      for (const it of imp.items) {
+        if (it.d.greatGrandfather && exKeys.has(it.k)) {
+          existing++;
+          continue;
+        }
+        if (doneKeys.current.has(it.k)) continue;
+        const ex = byKey.get(it.k);
+        if (ex) {
+          if (ex.status !== 'done') {
+            ex.d = it.d as QItem['d'];
+            if (ex.status === 'skipped') ex.status = 'pending';
+          }
+        } else {
+          next.push({ k: it.k, d: it.d as QItem['d'], status: 'pending', note: 'من Excel', t: Date.now() });
+          added++;
+        }
+      }
+      return next;
+    });
+    const pending = queueRef.current.filter(i => i.status === 'pending').length;
+    syncingRef.current = false;
+    syncStep.current = 'none';
+    setSyncText('');
+    setPhase('idle');
+    setDetail('');
+    lastActivity.current = Date.now();
+    setSyncUI(u => ({
+      ...u,
+      step: 'done',
+      text: added ? `أُضيف ${added} طالب من الملف — اضغط «ابدأ» للتسجيل` : 'لا يوجد طلاب جدد في الملف',
+      percent: 100,
+      summary: {
+        toRegister: pending,
+        added,
+        existing,
+        reviewed: 0,
+        emisRows: existingRef.current?.rows || 0,
+        warn: syncWarn.current || undefined,
+        file: { name: imp.fileName, rows: imp.rows, noName: imp.noName, duplicates: imp.duplicates, columns: imp.columns, unknown: imp.unknown },
+      },
+    }));
+    toast(`Excel: ${added} للتسجيل · ${existing} موجود في EMIS`);
+  };
+
   /** «تمت المراجعة» في موقع الطلاب (مباشرة على الخادم إن عُرف رقم الاستمارة) */
   const markOnSite = (k: string, id?: unknown) => {
     siteRef.current?.injectJavaScript(
@@ -334,7 +516,9 @@ function Main() {
     setQueue(q => {
       // نُبقي المنتهين للعرض، ونحذف «بانتظار التسجيل» الذين لم يعودوا غير مراجَعين في موقعك أو صاروا في EMIS
       const exKeys = new Set(existingRef.current?.keys || []);
-      const kept = q.filter(i => i.status === 'done' || i.status === 'skipped' || (keys.has(i.k) && !exKeys.has(i.k)));
+      const kept = q.filter(
+        i => i.status === 'done' || i.status === 'skipped' || i.d.__src === 'excel' || (keys.has(i.k) && !exKeys.has(i.k)),
+      );
       const byKey = new Map(kept.map(i => [i.k, i]));
       for (const f of fresh) {
         const ex = byKey.get(f.k);
@@ -437,7 +621,8 @@ function Main() {
     if (!k) return;
     addDone(k);
     updateItem(k, { status: 'done', note });
-    markOnSite(k, queueRef.current.find(i => i.k === k)?.d.__id);
+    const it = queueRef.current.find(i => i.k === k);
+    if (it?.d.__src !== 'excel') markOnSite(k, it?.d.__id);
     currentKey.current = null;
     setPhase('saved');
     setDetail('');
@@ -598,6 +783,11 @@ function Main() {
           return;
         case 'act': {
           if (m.ok) return;
+          if (m.action === 'generic:emis') {
+            setExcelBusy(false);
+            toast('افتح EMIS وسجّل الدخول وافتح النموذج، ثم «تعبئة»');
+            return;
+          }
           if (m.action === 'list:emis') {
             syncWarn.current = 'المساعد غير جاهز في EMIS (افتح «إدارة الطلاب») — زامنت بدون فحص EMIS';
             if (syncingRef.current && syncStep.current === 'emis') goSite();
@@ -647,6 +837,10 @@ function Main() {
             }
             return;
           }
+          if (pane === 'emis' && m.k === K_GSTAT) {
+            if (typeof v === 'string' && v) onGenericStatus(v);
+            return;
+          }
           if (pane === 'emis' && m.k === K_EXIST) {
             if (typeof v === 'string') onEmisList(v);
             return;
@@ -679,6 +873,10 @@ function Main() {
   useEffect(() => {
     const sub = BackHandler.addEventListener('hardwareBackPress', () => {
       const p = activeRef.current;
+      if (p === 'excel') {
+        setActive('site');
+        return true;
+      }
       if (canBack.current[p]) {
         views[p].current?.goBack();
         return true;
@@ -786,21 +984,11 @@ function Main() {
 
       {/* الشريط العلوي */}
       <View style={styles.header}>
-        {split ? (
-          <View style={{ flex: 1, flexDirection: ROW, alignItems: 'center', gap: 8 }}>
-            <View style={styles.logo}>
-              <Icon name="clipboard-check" size={18} color={colors.navy} />
-            </View>
-            <T bold style={{ color: '#fff', fontSize: 17 }}>
-              مساعد EMIS
-            </T>
-          </View>
-        ) : (
-          <View style={styles.segment}>
-            <Seg icon="school-outline" label="موقع الطلاب" on={active === 'site'} onPress={() => setActive('site')} />
-            <Seg icon="bank-outline" label="EMIS" on={active === 'emis'} onPress={() => setActive('emis')} />
-          </View>
-        )}
+        <View style={styles.segment}>
+          <Seg icon="school-outline" label="الطلاب" on={active === 'site' || (split && active !== 'excel')} onPress={() => setActive('site')} />
+          <Seg icon="file-excel" label="Excel" on={active === 'excel'} onPress={() => setActive('excel')} />
+          <Seg icon="bank-outline" label="EMIS" on={active === 'emis' && !split} onPress={() => setActive('emis')} />
+        </View>
         <IconButton
           icon={split ? 'view-agenda-outline' : 'view-split-horizontal'}
           onPress={() => saveSettings({ ...settings, split: !split })}
@@ -808,7 +996,7 @@ function Main() {
         />
         <IconButton
           icon="refresh"
-          onPress={() => reload(split ? 'emis' : active)}
+          onPress={() => reload(split || active === 'excel' ? 'emis' : active)}
           onLongPress={() => {
             reload('site');
             reload('emis');
@@ -826,8 +1014,27 @@ function Main() {
           {renderPane('emis')}
         </View>
 
+        {active === 'excel' ? (
+          <SafeAreaView edges={['bottom']} style={[styles.stacked, { zIndex: 20, elevation: 20, backgroundColor: colors.bg }]}>
+            <ExcelScreen
+              data={excel}
+              busy={excelBusy}
+              onPick={pickExcel}
+              onSelect={i => setExcel(d => (d ? { ...d, selected: i } : d))}
+              onFill={fillExcelRow}
+              onAddStudents={addExcelStudents}
+              onClear={() =>
+                Alert.alert('إزالة الملف', 'إزالة ملف Excel من التطبيق؟', [
+                  { text: 'إلغاء', style: 'cancel' },
+                  { text: 'إزالة', style: 'destructive', onPress: () => setExcel(() => null) },
+                ])
+              }
+            />
+          </SafeAreaView>
+        ) : null}
+
         {/* لوحة التحكم فوق الصفحة (لا تغيّر حجم الصفحة حتى لا تتحرك القوائم أثناء التعبئة) */}
-        <SafeAreaView edges={['bottom']} style={styles.panelWrap} pointerEvents="box-none">
+        <SafeAreaView edges={['bottom']} style={[styles.panelWrap, active === 'excel' && { display: 'none' }]} pointerEvents="box-none">
           <ControlPanel
             current={current}
             phase={phase}

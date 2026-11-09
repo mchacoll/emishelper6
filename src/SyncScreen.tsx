@@ -10,7 +10,16 @@ export type SyncState = {
   step: 'emis' | 'site' | 'done' | 'error';
   text: string;
   percent: number; // 0..100
-  summary?: { toRegister: number; added: number; existing: number; reviewed: number; emisRows: number; warn?: string };
+  title?: string;
+  summary?: {
+    toRegister: number;
+    added: number;
+    existing: number;
+    reviewed: number;
+    emisRows: number;
+    warn?: string;
+    file?: { name: string; rows: number; noName: number; duplicates: number; columns: string[]; unknown: string[] };
+  };
 };
 
 /** شاشة المزامنة: رسم + بطاقة تقدم */
@@ -69,7 +78,7 @@ export function SyncScreen({ state, onClose, onStop }: { state: SyncState; onClo
           <T bold style={styles.title}>
             مساعد EMIS الذكي
           </T>
-          <T style={styles.sub}>مزامنة الطلاب</T>
+          <T style={styles.sub}>{state.title || 'مزامنة الطلاب'}</T>
 
           {/* بطاقة التقدم */}
           <View style={styles.card}>
@@ -98,9 +107,27 @@ export function SyncScreen({ state, onClose, onStop }: { state: SyncState; onClo
 
             {sm ? (
               <View style={{ gap: 8 }}>
+                {sm.file ? (
+                  <View style={styles.fileBox}>
+                    <View style={[styles.row, { gap: 6 }]}>
+                      <Icon name="file-excel" size={18} color="#C8F7D6" />
+                      <T bold style={{ color: '#fff', fontSize: 13, flex: 1 }} numberOfLines={1}>
+                        {sm.file.name}
+                      </T>
+                    </View>
+                    <T style={{ color: 'rgba(255,255,255,0.85)', fontSize: 12, lineHeight: 18 }}>
+                      {sm.file.rows} صف{sm.file.noName ? ` · ${sm.file.noName} بدون اسم` : ''}
+                      {sm.file.duplicates ? ` · ${sm.file.duplicates} مكرر` : ''}
+                    </T>
+                    <T style={{ color: 'rgba(255,255,255,0.75)', fontSize: 11, lineHeight: 17 }} numberOfLines={3}>
+                      الأعمدة المقروءة: {sm.file.columns.join('، ')}
+                      {sm.file.unknown.length ? `\nلم تُقرأ: ${sm.file.unknown.join('، ')}` : ''}
+                    </T>
+                  </View>
+                ) : null}
                 <Stat icon="account-plus" label="للتسجيل في EMIS" value={sm.toRegister} extra={sm.added ? `(${sm.added} جديد)` : ''} strong />
                 <Stat icon="database-check" label="موجود في EMIS (لم يُزامَن)" value={sm.existing} />
-                <Stat icon="check-decagram" label="عليه «تمت المراجعة»" value={sm.reviewed} />
+                {sm.file ? null : <Stat icon="check-decagram" label="عليه «تمت المراجعة»" value={sm.reviewed} />}
                 <Stat icon="table-account" label="طلاب قرأتهم من EMIS" value={sm.emisRows} />
                 {sm.warn ? (
                   <View style={styles.warn}>
@@ -174,6 +201,7 @@ const styles = StyleSheet.create({
   bar: { height: 12, borderRadius: 6, backgroundColor: 'rgba(255,255,255,0.3)', overflow: 'hidden' },
   barFill: { height: 12, borderRadius: 6, backgroundColor: '#FFD84D' },
   pct: { color: 'rgba(255,255,255,0.9)', fontSize: 16, textAlign: 'center' },
+  fileBox: { backgroundColor: 'rgba(255,255,255,0.12)', borderRadius: radius.md, padding: 10, gap: 4 },
   warn: { flexDirection: ROW, gap: 6, backgroundColor: '#FFE8B3', borderRadius: radius.md, padding: 8, alignItems: 'flex-start' },
   ghostBtn: { borderColor: 'rgba(255,255,255,0.6)', backgroundColor: 'rgba(255,255,255,0.12)' },
 });

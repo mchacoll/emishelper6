@@ -1,7 +1,7 @@
 // ==UserScript==
-// @name         مساعد EMIS – تعبئة تلقائية (v7.9.1)
+// @name         مساعد EMIS – تعبئة تلقائية (v8.0.0)
 // @namespace    emis-helper
-// @version      7.9.1
+// @version      8.0.0
 // @description  تعبئة تلقائية لـ EMIS + حفظ + «تمت المراجعة» + فتح «جديد» + نقل «الاحتياجات الخاصة» من EMIS إلى موقعك
 // @match        *://*/*
 // @grant        GM_setValue
@@ -315,7 +315,7 @@
     ui.dir = 'rtl';
 
     const head = mk('div', 'display:flex;justify-content:space-between;align-items:center;gap:8px');
-    head.appendChild(mk('b', 'font-size:13.5px;', title + ' v7.9.1'));
+    head.appendChild(mk('b', 'font-size:13.5px;', title + ' v8.0.0'));
     const minBtn = mk('button',
       'background:none;border:0;color:#fff;font-size:22px;' +
       'min-width:32px;min-height:32px;cursor:pointer;padding:0;line-height:1;', '−');
@@ -2959,6 +2959,51 @@
       null, null,
       ui => requestStop(ui)
     );
+
+    /* ---------- (v8.0) تعبئة أي نموذج في EMIS من صف Excel: عنوان العمود = اسم الحقل ---------- */
+    const K_GSTAT = 'emis_generic_status_v1';
+    async function fillGeneric(pairs, log) {
+      let ok = 0;
+      const miss = [], fail = [];
+      for (const [label, raw] of pairs) {
+        checkStop();
+        const value = clean(String(raw ?? ''));
+        if (!value || !clean(label)) continue;
+        const ctrl = findControl([label]) || findControlLoose([label]);
+        if (!ctrl) { miss.push(label); log(`… ${label} (ليس في هذه الصفحة)`); continue; }
+        lastChosen = ''; lastOptsTxt = '';
+        let done = false;
+        try {
+          const tag = ctrl.tagName;
+          const searchy = isTextInput(ctrl) && !ctrl.readOnly &&
+            (ctrl.getAttribute('aria-autocomplete') === 'list' || ctrl.type === 'search' || /q-field__input|q-select/.test(String(ctrl.className)));
+          if (norm(label) === norm('الجنس')) {
+            done = await chooseGenderClick(ctrl, [value]);
+          } else if (tag === 'INPUT' && (ctrl.type === 'checkbox' || ctrl.type === 'radio')) {
+            done = await setControl(ctrl, [value]);
+          } else if (/تاريخ/.test(label) || ctrl.type === 'date') {
+            done = await setControl(ctrl, [value], 'date');
+          } else if (tag === 'SELECT' || searchy || looksDropdown(ctrl) || (tag !== 'INPUT' && tag !== 'TEXTAREA')) {
+            const pre = alreadyChosen(ctrl, [value]);
+            done = pre ? (lastChosen = pre + ' (موجود)', true) : await setControl(ctrl, [value], 'select');
+          } else {
+            done = clean(ctrl.value || '') === value ? true : await hardSetText(ctrl, value);
+          }
+        } catch (e) { if (e && e.isStop) throw e; console.warn('[EMIS generic]', label, e); }
+        if (done) { ok++; log(`✔ ${label} ← ${lastChosen || value}`); }
+        else { fail.push(label); log(`✖ ${label}` + (lastOptsTxt ? ` (الخيارات: ${lastOptsTxt})` : '')); }
+        await sleep(DELAY);
+      }
+      return { ok, miss, fail };
+    }
+    window.__emisFillGeneric = (pairs, row) => {
+      guarded(api, async () => {
+        api.setLog('📄 تعبئة من Excel...');
+        const r = await fillGeneric(pairs || [], api.addLog);
+        api.addLog(`✅ عُبّئ ${r.ok}` + (r.fail.length ? ` · ✖ لم يُختر: ${r.fail.join('، ')}` : '') + (r.miss.length ? ` · ليس في هذه الصفحة: ${r.miss.join('، ')}` : ''));
+        gmSet(K_GSTAT, JSON.stringify({ ...r, row, t: Date.now() }));
+      });
+    };
 
     onChange(K_CMD, cmdRaw => {
       if (!cmdRaw) return;
