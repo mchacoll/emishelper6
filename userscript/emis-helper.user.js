@@ -1,7 +1,7 @@
 // ==UserScript==
-// @name         مساعد EMIS – تعبئة تلقائية (v7.7.1)
+// @name         مساعد EMIS – تعبئة تلقائية (v7.7.2)
 // @namespace    emis-helper
-// @version      7.7.1
+// @version      7.7.2
 // @description  تعبئة تلقائية لـ EMIS + حفظ + «تمت المراجعة» + فتح «جديد» + نقل «الاحتياجات الخاصة» من EMIS إلى موقعك
 // @match        *://*/*
 // @grant        GM_setValue
@@ -315,7 +315,7 @@
     ui.dir = 'rtl';
 
     const head = mk('div', 'display:flex;justify-content:space-between;align-items:center;gap:8px');
-    head.appendChild(mk('b', 'font-size:13.5px;', title + ' v7.7.1'));
+    head.appendChild(mk('b', 'font-size:13.5px;', title + ' v7.7.2'));
     const minBtn = mk('button',
       'background:none;border:0;color:#fff;font-size:22px;' +
       'min-width:32px;min-height:32px;cursor:pointer;padding:0;line-height:1;', '−');
@@ -823,6 +823,28 @@
   }
 
   // (v7.7.1) ما نكتبه في قائمة البحث: النص كاملاً، ثم أطول كلمة فيه (لو اختلفت الكتابة قليلاً في EMIS)
+  // (v7.7.2) هل يعرض الحقل القيمة المطلوبة مسبقاً؟ (القيمة المختارة داخل الحقل وليس عنوانه)
+  function alreadyChosen(ctrl, value) {
+    try {
+      let anchor = ctrl.closest(WRAP_SEL) || ctrl;
+      if (anchor.getBoundingClientRect().height > 120) anchor = ctrl;
+      const box = anchor.querySelector('.q-field__native,.p-select-label,.p-dropdown-label') || anchor;
+      const shown = norm([ctrl.value || '', box !== ctrl ? (box.innerText || '') : ''].join(' '));
+      if (!shown) return '';
+      for (const c of [].concat(value)) {
+        if (typeof c === 'string') {
+          const n = norm(c);
+          if (n.length >= 3 && shown.includes(n)) return c;
+        } else if (isMatcher(c)) {
+          const t = (box.innerText || ctrl.value || '').split(/\n/).map(clean).filter(Boolean);
+          const hit = t.find(x => { if (x.length >= 30) return false; try { return c.test(x); } catch { return false; } });
+          if (hit) return hit;
+        }
+      }
+    } catch { /* ignore */ }
+    return '';
+  }
+
   function typeWords(c) {
     const src = typeof c === 'string' ? c : (c && (c.typeHint || c.label)) || '';
     const s = clean(String(src));
@@ -830,7 +852,13 @@
     // (v7.7.1) الكلمة المميزة أولاً (تتحمل اختلاف الكتابة)، ثم النص كاملاً، ثم بدون همزة/«ال»
     const words = s.split(/[\s/،,\-]+/).filter(w => w.length >= 3).sort((a, b) => b.length - a.length);
     const out = [];
-    if (words[0]) out.push(words[0]);
+    // (v7.7.2) أولاً جزء الكلمة الذي لا يتأثر بالهمزة و«ال» (أنثى ← نثى، الإسلام ← سلام)
+    //          فيطابق «أنثى» و«انثى» معاً من أول مرة
+    if (words[0]) {
+      const core = words[0].replace(/^ال/, '').replace(/^[أإآا]/, '').split(/[أإآ]/).sort((a, b) => b.length - a.length)[0] || '';
+      if (core.length >= 3 && core !== words[0]) out.push(core);
+    }
+    if (words[0] && !out.includes(words[0])) out.push(words[0]);
     if (!out.includes(s)) out.push(s);
     const plain = (words[0] || s).replace(/[أإآ]/g, 'ا').replace(/^ال/, '');
     if (plain.length >= 3 && !out.includes(plain)) out.push(plain);
@@ -1857,6 +1885,9 @@
       }
       const ctrl = (item.find ? await item.find() : null) || await findControlBest(item.l);
       if (!ctrl) { failed.push(item); log(`✖ ${item.l[0]} (لا يوجد حقل)`); continue; }
+      // (v7.7.2) القائمة تعرض القيمة الصحيحة مسبقاً: نتركها ولا نعيد الكتابة والاختيار
+      const pre = item.kind === 'select' && !item.secRaw ? alreadyChosen(ctrl, value) : '';
+      if (pre) { ok++; log(`✔ ${item.l[0]} ← ${pre} (موجود)`); await sleep(DELAY); continue; }
       let done = false;
       lastChosen = '';
       lastOptsTxt = '';
