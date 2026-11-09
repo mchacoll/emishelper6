@@ -1,4 +1,5 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import * as Clipboard from 'expo-clipboard';
 import { StatusBar } from 'expo-status-bar';
 import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
@@ -13,6 +14,7 @@ import {
   Switch,
   Text,
   TextInput,
+  ToastAndroid,
   View,
 } from 'react-native';
 import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
@@ -35,6 +37,7 @@ type Settings = {
   split: boolean;       // عرض النافذتين معاً (أعلى/أسفل)
   autoSwitch: boolean;  // الانتقال تلقائياً إلى EMIS عند «ابدأ» ثم العودة بعد الحفظ
   desktopEmis: boolean; // عرض EMIS بعرض شاشة الكمبيوتر
+  autoFillNext: boolean; // بعد الانتقال للطالب التالي: فتح «جديد» في EMIS وتعبئته تلقائياً
 };
 
 const DEFAULT_SETTINGS: Settings = {
@@ -43,6 +46,7 @@ const DEFAULT_SETTINGS: Settings = {
   split: false,
   autoSwitch: true,
   desktopEmis: false,
+  autoFillNext: false,
 };
 const DESKTOP_WIDTH = 1280;
 
@@ -154,9 +158,20 @@ function Main() {
         return;
       }
       if (m.__gm === 'set') {
-        store.current[m.k] = m.v;
+        let v = m.v;
+        // بعد «تمت المراجعة» يطلب الموقع فتح «جديد» فقط (newOnly).
+        // إن فُعّل «تعبئة الطالب التالي تلقائياً» نحوّله إلى «جديد + تعبئة» (new) الموجود في السكربت.
+        if (m.k === K_CMD && pane === 'site' && settingsRef.current.autoFillNext && typeof v === 'string') {
+          try {
+            const cmd = JSON.parse(v);
+            if (cmd && cmd.mode === 'newOnly') v = JSON.stringify({ ...cmd, mode: 'new' });
+          } catch {
+            /* ignore */
+          }
+        }
+        store.current[m.k] = v;
         persistStore();
-        other?.injectJavaScript(remoteSetJs(m.k, m.v));
+        other?.injectJavaScript(remoteSetJs(m.k, v));
 
         // التبديل التلقائي بين النافذتين (في وضع التبويبات فقط)
         const s = settingsRef.current;
@@ -198,7 +213,29 @@ function Main() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const shareLogs = () => {
+  const toast = (t: string) => {
+    try {
+      ToastAndroid.show(t, ToastAndroid.SHORT);
+    } catch {
+      /* ignore */
+    }
+  };
+
+  // «✔ تم ⏭»: يحدد «تمت المراجعة» للطالب الحالي في موقعك وينتقل لأول طالب غير مراجَع
+  // (نفس زر «✔ تمت المراجعة ⏭» في الشريط الأزرق، لكن يعمل وأنت في شاشة EMIS)
+  const doneNext = () => {
+    views.site.current?.injectJavaScript(
+      String.raw`(function(){try{
+        var ui=document.getElementById('emis-helper-ui');
+        var b=ui&&[].slice.call(ui.querySelectorAll('button')).find(function(x){return x.textContent.indexOf('تمت المراجعة')>-1;});
+        if(b){b.click();}
+        else{console.warn('[EMIS app] لم أجد زر «تمت المراجعة» في موقع الطلاب — افتح صفحة الطالب في موقعك');}
+      }catch(e){console.error('[EMIS app]',e)}})();true;`,
+    );
+    toast('جارٍ تحديد «تمت المراجعة» والانتقال للطالب التالي...');
+  };
+
+  const buildLogText = () => {
     const s = settingsRef.current;
     const text = [
       'سجل مساعد EMIS (التطبيق v7.6.1)',
@@ -213,7 +250,15 @@ function Main() {
       '===== الأخطاء =====',
       ...logs.map(l => `${new Date(l.t).toLocaleTimeString()} [${l.pane}] ${l.level}: ${l.msg}`),
     ].join('\n');
-    Share.share({ message: text.slice(-60000) }).catch(() => {});
+    return text.slice(-60000);
+  };
+  const shareLogs = () => {
+    Share.share({ message: buildLogText() }).catch(() => {});
+  };
+  const copyLogs = () => {
+    Clipboard.setStringAsync(buildLogText())
+      .then(() => toast('تم نسخ السجل'))
+      .catch(() => toast('تعذّر النسخ'));
   };
 
   const reload = (p: Pane) => setReloadKey(k => ({ ...k, [p]: k[p] + 1 }));
@@ -293,7 +338,6 @@ function Main() {
 
       {/* الشريط العلوي */}
       <View style={styles.topBar}>
-        <Text style={styles.title}>مساعد EMIS</Text>
         <View style={styles.row}>
           {!split && (
             <>
@@ -303,6 +347,9 @@ function Main() {
           )}
           <IconBtn label={split ? '▭' : '◫'} onPress={() => saveSettings({ ...settings, split: !split })} />
           <IconBtn label="↻" onPress={() => reload(split ? 'emis' : active)} onLongPress={() => { reload('site'); reload('emis'); }} />
+          <Pressable onPress={doneNext} style={styles.doneBtn} hitSlop={4}>
+            <Text style={styles.doneText}>✔ تم ⏭</Text>
+          </Pressable>
           <IconBtn label="⚙" onPress={() => setShowSettings(true)} />
         </View>
       </View>
@@ -325,6 +372,7 @@ function Main() {
         onClearData={clearHelperData}
         onClearLogs={() => setLogs([])}
         onShareLogs={shareLogs}
+        onCopyLogs={copyLogs}
       />
     </SafeAreaView>
   );
@@ -356,6 +404,7 @@ function SettingsModal(props: {
   onClearData: () => void;
   onClearLogs: () => void;
   onShareLogs: () => void;
+  onCopyLogs: () => void;
 }) {
   const [draft, setDraft] = useState(props.settings);
   useEffect(() => {
@@ -403,6 +452,11 @@ function SettingsModal(props: {
             onChange={desktopEmis => setDraft({ ...draft, desktopEmis })}
           />
           <ToggleRow
+            label="بعد «تمت المراجعة»: افتح «جديد» في EMIS وعبّئ الطالب التالي تلقائياً"
+            value={draft.autoFillNext}
+            onChange={autoFillNext => setDraft({ ...draft, autoFillNext })}
+          />
+          <ToggleRow
             label="الانتقال تلقائياً إلى EMIS عند «ابدأ» والعودة بعد الحفظ"
             value={draft.autoSwitch}
             onChange={autoSwitch => setDraft({ ...draft, autoSwitch })}
@@ -421,9 +475,14 @@ function SettingsModal(props: {
             <Text style={styles.btnText}>مسح بيانات المساعد (الطالب المحفوظ ومكان الشريط)</Text>
           </Pressable>
 
-          <Pressable style={[styles.btn, { backgroundColor: C.blue }]} onPress={props.onShareLogs}>
-            <Text style={styles.btnText}>📤 مشاركة السجل الكامل (لإرساله للدعم)</Text>
-          </Pressable>
+          <View style={styles.toggleRow}>
+            <Pressable style={[styles.btn, { flex: 1, backgroundColor: C.blue }]} onPress={props.onCopyLogs}>
+              <Text style={styles.btnText}>📋 نسخ السجل</Text>
+            </Pressable>
+            <Pressable style={[styles.btn, { flex: 1, backgroundColor: C.blue }]} onPress={props.onShareLogs}>
+              <Text style={styles.btnText}>📤 مشاركة السجل</Text>
+            </Pressable>
+          </View>
 
           <View style={styles.logHead}>
             <Text style={styles.label}>أخطاء المساعد ({props.logs.length})</Text>
@@ -439,7 +498,7 @@ function SettingsModal(props: {
                 .slice()
                 .reverse()
                 .map((l, i) => (
-                  <Text key={i} style={[styles.logLine, l.level === 'error' && { color: C.red }]}>
+                  <Text selectable key={i} style={[styles.logLine, l.level === 'error' && { color: C.red }]}>
                     {new Date(l.t).toLocaleTimeString()} [{l.pane === 'site' ? 'الموقع' : 'EMIS'}] {l.msg}
                   </Text>
                 ))
@@ -483,8 +542,8 @@ const styles = StyleSheet.create({
   topBar: {
     flexDirection: rtlRow,
     alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingHorizontal: 10,
+    justifyContent: 'flex-start',
+    paddingHorizontal: 8,
     paddingVertical: 6,
     backgroundColor: C.navy,
   },
@@ -495,6 +554,8 @@ const styles = StyleSheet.create({
   tabTextOn: { color: C.navy },
   iconBtn: { width: 34, height: 34, borderRadius: 8, alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(255,255,255,0.12)' },
   iconText: { color: '#fff', fontSize: 18 },
+  doneBtn: { height: 34, paddingHorizontal: 10, borderRadius: 8, alignItems: 'center', justifyContent: 'center', backgroundColor: '#8a5cc2' },
+  doneText: { color: '#fff', fontSize: 13, fontWeight: '700' },
   stacked: { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: '#fff' },
   splitWrap: { flexDirection: 'column' },
   splitPane: { flex: 1, backgroundColor: '#fff' },
