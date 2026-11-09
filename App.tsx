@@ -313,6 +313,13 @@ function Main() {
     lastActivity.current = Date.now();
   };
 
+  /** «تمت المراجعة» في موقع الطلاب (مباشرة على الخادم إن عُرف رقم الاستمارة) */
+  const markOnSite = (k: string, id?: unknown) => {
+    siteRef.current?.injectJavaScript(
+      `window.__emisMark&&window.__emisMark(${JSON.stringify(k)},${JSON.stringify(typeof id === 'number' ? id : null)});true;`,
+    );
+  };
+
   /** دمج نتيجة المزامنة مع قائمة التسجيل */
   const mergeSync = (raw: string) => {
     let res: { items: { k: string; d: QItem['d'] }[]; reviewed: number; existing?: number; total: number };
@@ -333,13 +340,13 @@ function Main() {
         const ex = byKey.get(f.k);
         // طالب معروف (لم يُفتح في المزامنة السريعة): نُبقي بياناته المحفوظة
         if (!f.d) {
-          if (doneKeys.current.has(f.k)) siteRef.current?.injectJavaScript(`window.__emisMark&&window.__emisMark(${JSON.stringify(f.k)});true;`);
+          if (doneKeys.current.has(f.k)) markOnSite(f.k, ex?.d.__id);
           if (ex && ex.status === 'skipped') ex.status = 'pending';
           continue;
         }
         if (doneKeys.current.has(f.k)) {
           // سُجّل سابقاً في EMIS لكن لم يُحدَّد «تمت المراجعة» في موقعك: نحدده الآن ولا نسجّله مرة أخرى
-          siteRef.current?.injectJavaScript(`window.__emisMark&&window.__emisMark(${JSON.stringify(f.k)});true;`);
+          markOnSite(f.k, f.d.__id);
           if (!ex) kept.push({ k: f.k, d: f.d, status: 'done', note: 'سُجّل سابقاً', t: Date.now() });
           continue;
         }
@@ -430,7 +437,7 @@ function Main() {
     if (!k) return;
     addDone(k);
     updateItem(k, { status: 'done', note });
-    siteRef.current?.injectJavaScript(`window.__emisMark&&window.__emisMark(${JSON.stringify(k)});true;`);
+    markOnSite(k, queueRef.current.find(i => i.k === k)?.d.__id);
     currentKey.current = null;
     setPhase('saved');
     setDetail('');

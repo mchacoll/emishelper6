@@ -1,7 +1,7 @@
 // ==UserScript==
-// @name         مساعد EMIS – تعبئة تلقائية (v7.8.0)
+// @name         مساعد EMIS – تعبئة تلقائية (v7.9.0)
 // @namespace    emis-helper
-// @version      7.8.0
+// @version      7.9.0
 // @description  تعبئة تلقائية لـ EMIS + حفظ + «تمت المراجعة» + فتح «جديد» + نقل «الاحتياجات الخاصة» من EMIS إلى موقعك
 // @match        *://*/*
 // @grant        GM_setValue
@@ -315,7 +315,7 @@
     ui.dir = 'rtl';
 
     const head = mk('div', 'display:flex;justify-content:space-between;align-items:center;gap:8px');
-    head.appendChild(mk('b', 'font-size:13.5px;', title + ' v7.8.0'));
+    head.appendChild(mk('b', 'font-size:13.5px;', title + ' v7.9.0'));
     const minBtn = mk('button',
       'background:none;border:0;color:#fff;font-size:22px;' +
       'min-width:32px;min-height:32px;cursor:pointer;padding:0;line-height:1;', '−');
@@ -2482,8 +2482,109 @@
         return res(ok ? 'ok' : 'unknown');
       } catch (e) { return res('error'); }
     }
-    window.__emisSync = (known, exist) => { syncAll(known, exist); };
-    window.__emisMark = k => { markByKey(k); };
+    /* ---------- (v7.9) مزامنة فورية من خادم موقع الطلاب مباشرة (طلب واحد لكل الطلاب) ---------- */
+    async function trpc(path, input, post) {
+      const enc = encodeURIComponent(JSON.stringify({ 0: { json: input === undefined ? null : input } }));
+      const res = post
+        ? await fetch('/api/trpc/' + path + '?batch=1', { method: 'POST', credentials: 'include', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ 0: { json: input } }) })
+        : await fetch('/api/trpc/' + path + '?batch=1&input=' + enc, { credentials: 'include' });
+      const j = await res.json();
+      const r = Array.isArray(j) ? j[0] : j;
+      if (!r || r.error) throw new Error((r && r.error && r.error.json && r.error.json.message) || ('HTTP ' + res.status));
+      return r.result && r.result.data ? r.result.data.json : null;
+    }
+    const REVIEWED_VALUES = ['true', '1', 'yes', 'reviewed', 'تمت المراجعة', 'تمت المراجعه'];
+    // نفس معالجة موقعك للاستمارة قبل عرضها (الصف، الشعبة، التاريخ، الديانة، اللغة)
+    function recordToData(rec, schoolName) {
+      let t = {};
+      try { t = JSON.parse(rec.details || '{}'); } catch { /* ignore */ }
+      const r = { fullName: rec.fullName, grade: rec.grade, branch: rec.section, ...t };
+      const S = v => String(v ?? '').trim();
+      if (!r.dateOfBirth) r.dateOfBirth = [r.dateOfBirthYear, r.dateOfBirthMonth, r.dateOfBirthDay].filter(Boolean).join('-');
+      if (r.identityType === 'البطاقة الموحدة') r.nationalId = '';
+      r.branch = S(r.branch) === 'ا' ? 'أ' : S(r.branch) === 'ه' ? 'هـ' : S(r.branch);
+      r.grade = S(r.grade) === 'الاول متوسط' ? 'الأول متوسط' : S(r.grade) === 'الاول' ? 'الأول' : S(r.grade);
+      if (S(r.religion) === 'الاسلام') r.religion = 'الإسلام';
+      if (['/', 'لايوجد', 'لا يوجد', '0', '٠', '.'].includes(S(r.familyName))) r.familyName = S(r.fatherGrandfatherName);
+      const mt = S(r.motherTongue);
+      if (['عربي', 'العربي', 'العربية'].includes(mt)) r.motherTongue = 'العربية';
+      else if (['كردي', 'الكردي', 'الكردية'].includes(mt)) r.motherTongue = 'الكردية';
+      else if (['تركماني', 'التركماني', 'التركمانية'].includes(mt)) r.motherTongue = 'التركمانية';
+      // اسم الطالب: الاسم الأول (وإن كُتب الاسم كاملاً في الحقل نأخذ الكلمة الأولى)
+      let name = S(r.fullName);
+      const fn = S(r.fatherName);
+      const parts = name.split(/\s+/);
+      if (parts.length >= 2 && fn && norm(parts[1]) === norm(fn.split(/\s+/)[0])) name = parts[0];
+      const d = {
+        name, father: fn, grandfather: S(r.fatherFatherName), greatGrandfather: S(r.fatherGrandfatherName),
+        surname: S(r.familyName), mother: S(r.motherName), motherFather: S(r.motherFatherName), motherGrandfather: S(r.motherGrandfatherName),
+        dob: S(r.dateOfBirth), nationalId: S(r.unifiedCardNumber), idType: S(r.identityType),
+        civilRecord: S(r.registryNumber), civilSheet: S(r.pageNumber), civilId: S(r.nationalId),
+        gender: S(r.gender), motherTongue: S(r.motherTongue), blood: S(r.bloodType), religion: S(r.religion), phone: S(r.phone),
+        special: S(r.specialNeedsType), living: S(r.livingStandard), welfare: S(r.socialCareIncluded),
+        grade: S(r.grade), section: S(r.branch), neighborhood: S(r.neighborhood), mahalla: S(r.district), alley: S(r.alley),
+        landmark: S(r.nearestLandmark), school: schoolName || '', reviewed: REVIEWED_VALUES.includes(S(r.reviewed).toLowerCase()),
+        __id: rec.id, __schoolId: rec.schoolId,
+      };
+      for (const k of Object.keys(d)) if (d[k] === '') delete d[k];
+      return d;
+    }
+    async function syncApi(known, exist) {
+      if (syncBusy) return;
+      syncBusy = true;
+      const prog = o => gmSet(K_SYNC, JSON.stringify({ ...o, t: Date.now() }));
+      let fallback = false;
+      try {
+        const me = await trpc('school.me');
+        if (!me || !me.slug) throw new Error('no-school');
+        prog({ running: true, done: 0, total: 1, found: 0, reviewed: 0, existing: 0 });
+        const list = await trpc('student.listForSchool', { schoolSlug: me.slug });
+        if (!Array.isArray(list)) throw new Error('bad-list');
+        const exKeys = new Set(((exist && exist.keys) || []).filter(k => k && k.length >= 5));
+        const exIds = new Set(((exist && exist.ids) || []).map(String));
+        const items = [], seen = new Set();
+        let reviewed = 0, existing = 0;
+        for (const rec of list) {
+          const d = recordToData(rec, me.name);
+          if (d.reviewed) { reviewed++; continue; }
+          const k = norm(d.name) + norm(d.father) + norm(d.grandfather);
+          const nid = String(d.nationalId || '').replace(/[\u0660-\u0669]/g, x => x.charCodeAt(0) - 0x660).replace(/\D/g, '');
+          if (exKeys.has(k) || (nid && exIds.has(nid))) { existing++; continue; }
+          if (seen.has(k)) continue;
+          seen.add(k);
+          items.push({ k, d });
+        }
+        gmSet(K_QUEUE, JSON.stringify({ items, reviewed, existing, total: list.length, api: true, t: Date.now() }));
+        prog({ running: false, done: list.length, total: list.length, found: items.length, reviewed, existing, api: true });
+      } catch (e) {
+        console.warn('[EMIS sync api] fallback:', e && e.message);
+        fallback = true;
+      } finally { syncBusy = false; }
+      if (fallback) syncAll(known, exist);   // الطريقة القديمة (فتح الطلاب)
+    }
+    // «تمت المراجعة» مباشرة على الخادم: نفس ما يرسله زر «تمت المراجعة» في موقعك
+    async function markApi(k, id) {
+      const res = r => gmSet(K_MARK, JSON.stringify({ k, res: r, api: true, t: Date.now() }));
+      try {
+        const me = await trpc('school.me');
+        const list = await trpc('student.listForSchool', { schoolSlug: me.slug });
+        const rec = (list || []).find(x => x.id === id);
+        if (!rec) throw new Error('not-found');
+        let t = {};
+        try { t = JSON.parse(rec.details || '{}'); } catch { /* ignore */ }
+        if (REVIEWED_VALUES.includes(String(t.reviewed ?? '').trim().toLowerCase())) return res('already');
+        await trpc('student.updateAdmin', {
+          schoolId: rec.schoolId ?? me.id, id: rec.id, fullName: rec.fullName, grade: rec.grade, section: rec.section,
+          details: JSON.stringify({ ...t, reviewed: 'true' }),
+        }, true);
+        return res('ok');
+      } catch (e) {
+        console.warn('[EMIS mark api] fallback:', e && e.message);
+        markByKey(k);
+      }
+    }
+    window.__emisSync = (known, exist) => { syncApi(known, exist); };
+    window.__emisMark = (k, id) => { if (id) markApi(k, id); else markByKey(k); };
 
     bar = createBar('مساعد EMIS',
       api => {
@@ -2791,7 +2892,58 @@
         prog({ done: true, error: e && e.isStop ? 'أُوقفت القراءة' : 'خطأ: ' + (e && e.message ? e.message : e) });
       } finally { listBusy = false; }
     }
-    window.__emisList = () => { listEmisStudents(); };
+    // (v7.9) قائمة طلاب EMIS من خادم EMIS مباشرة (بدل قراءة الجدول صفحة صفحة)
+    function emisToken() {
+      const look = (o, depth) => {
+        if (!o || typeof o !== 'object' || depth > 4) return '';
+        if (typeof o.accessToken === 'string' && o.accessToken.length > 20) return o.accessToken;
+        for (const v of Object.values(o)) { const t = look(v, depth + 1); if (t) return t; }
+        return '';
+      };
+      for (const st of [localStorage, sessionStorage]) {
+        for (let i = 0; i < st.length; i++) {
+          const v = st.getItem(st.key(i)) || '';
+          if (v.indexOf('accessToken') < 0) continue;
+          try { const t = look(JSON.parse(v), 0); if (t) return t; } catch { /* ignore */ }
+        }
+      }
+      return '';
+    }
+    async function listEmisApi() {
+      if (listBusy) return;
+      const prog = o => gmSet(K_EXIST, JSON.stringify({ ...o, t: Date.now() }));
+      try {
+        const token = emisToken();
+        if (!token) throw new Error('no-token');
+        const sm = location.pathname.match(/schools\/(\d+)/) || location.pathname.match(/entities\/(\d+)/);
+        const keys = new Set(), ids = new Set();
+        let rows = 0, total = 0;
+        const per = 200;
+        for (let page = 1; page <= 100; page++) {
+          const q = new URLSearchParams({ page: String(page), rowsPerPage: String(per), sortBy: 'id', sortOrder: 'desc' });
+          if (sm) q.set('entityId', sm[1]);
+          const res = await fetch('/api/student/getstudents?' + q, { headers: { Authorization: 'Bearer ' + token, Accept: 'application/json' } });
+          if (!res.ok) throw new Error('HTTP ' + res.status);
+          const j = await res.json();
+          const data = (j && j.data) || [];
+          total = (j && j.meta && j.meta.totalCount) || total;
+          for (const st of data) {
+            rows++;
+            const tk = clean(st.fullName || '').split(/\s+/).filter(w => /^[\u0621-\u064A]+$/.test(w));
+            if (tk.length >= 3) keys.add(norm(tk[0]) + norm(tk[1]) + norm(tk[2]));
+            const nid = String(st.nationalIdNumber || '').replace(/[\u0660-\u0669]/g, x => x.charCodeAt(0) - 0x660).replace(/\D/g, '');
+            if (nid) ids.add(nid);
+          }
+          prog({ done: false, rows, total });
+          if (!data.length || data.length < per || (total && rows >= total)) break;
+        }
+        prog({ done: true, keys: [...keys], ids: [...ids], rows, total, api: true });
+      } catch (e) {
+        console.warn('[EMIS list api] fallback:', e && e.message);
+        listEmisStudents();   // الطريقة القديمة (قراءة الجدول)
+      }
+    }
+    window.__emisList = () => { listEmisApi(); };
 
     const api = createBar('مساعد EMIS',
       ui => guarded(ui, async () => {
