@@ -2,6 +2,9 @@ name: Build APK
 
 on:
   workflow_dispatch:
+  push:
+    branches: [main, 'claude/**']
+    paths-ignore: ['**.md']
 
 jobs:
   build:
@@ -10,17 +13,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Unzip project
-        run: unzip -o emishelper-android-source-v3.zip
-
-      - uses: pnpm/action-setup@v4
-        with:
-          version: 9
-
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-          cache: pnpm
+          cache: npm
 
       - uses: actions/setup-java@v4
         with:
@@ -28,14 +24,21 @@ jobs:
           java-version: 17
 
       - name: Install dependencies
-        run: pnpm install --no-frozen-lockfile
+        run: npm ci
+
+      - name: Embed userscript + typecheck
+        run: |
+          npm run embed
+          npm run typecheck
 
       - name: Generate native Android project
         run: npx expo prebuild -p android --no-install
+        env:
+          EXPO_OFFLINE: '1'
 
       - name: Build release APK
         working-directory: android
-        run: ./gradlew assembleRelease --no-daemon
+        run: ./gradlew assembleRelease --no-daemon -PreactNativeArchitectures=armeabi-v7a,arm64-v8a
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
