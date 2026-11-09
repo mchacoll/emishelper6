@@ -8,6 +8,7 @@ import {
   Modal,
   Pressable,
   ScrollView,
+  Share,
   StyleSheet,
   Switch,
   Text,
@@ -19,6 +20,7 @@ import WebView, { type WebViewMessageEvent, type WebViewNavigation } from 'react
 
 import {
   buildInjection,
+  desktopViewportJs,
   hostOf,
   parseBridgeMessage,
   remoteSetJs,
@@ -32,6 +34,7 @@ type Settings = {
   emisUrl: string;
   split: boolean;       // عرض النافذتين معاً (أعلى/أسفل)
   autoSwitch: boolean;  // الانتقال تلقائياً إلى EMIS عند «ابدأ» ثم العودة بعد الحفظ
+  desktopEmis: boolean; // عرض EMIS بعرض شاشة الكمبيوتر
 };
 
 const DEFAULT_SETTINGS: Settings = {
@@ -39,7 +42,9 @@ const DEFAULT_SETTINGS: Settings = {
   emisUrl: 'https://emis.moedu.gov.iq',
   split: false,
   autoSwitch: true,
+  desktopEmis: false,
 };
+const DESKTOP_WIDTH = 1280;
 
 const K_SETTINGS = 'app_settings_v1';
 const K_STORE = 'gm_store_v1';
@@ -78,6 +83,7 @@ function Main() {
   const [active, setActive] = useState<Pane>('site');
   const [showSettings, setShowSettings] = useState(false);
   const [logs, setLogs] = useState<LogLine[]>([]);
+  const barLogs = useRef<Record<Pane, string>>({ site: '', emis: '' });
   const [reloadKey, setReloadKey] = useState({ site: 0, emis: 0 });
 
   // مخزن GM_* المشترك بين النافذتين
@@ -139,6 +145,10 @@ function Main() {
         self?.injectJavaScript(syncAndBootJs(store.current));
         return;
       }
+      if (m.__gm === 'bar') {
+        barLogs.current[pane] = m.text;
+        return;
+      }
       if (m.__gm === 'log') {
         addLog(pane, m.level, m.msg);
         return;
@@ -188,6 +198,24 @@ function Main() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  const shareLogs = () => {
+    const s = settingsRef.current;
+    const text = [
+      'سجل مساعد EMIS (التطبيق v7.6.1)',
+      `وضع الكمبيوتر لـ EMIS: ${s.desktopEmis ? 'مفعّل' : 'غير مفعّل'} — عرض النافذتين معاً: ${s.split ? 'نعم' : 'لا'}`,
+      '',
+      '===== شريط EMIS =====',
+      barLogs.current.emis || '(فارغ)',
+      '',
+      '===== شريط موقع الطلاب =====',
+      barLogs.current.site || '(فارغ)',
+      '',
+      '===== الأخطاء =====',
+      ...logs.map(l => `${new Date(l.t).toLocaleTimeString()} [${l.pane}] ${l.level}: ${l.msg}`),
+    ].join('\n');
+    Share.share({ message: text.slice(-60000) }).catch(() => {});
+  };
+
   const reload = (p: Pane) => setReloadKey(k => ({ ...k, [p]: k[p] + 1 }));
 
   const clearHelperData = () => {
@@ -223,11 +251,17 @@ function Main() {
         pointerEvents={split || active === p ? 'auto' : 'none'}
       >
         <WebView
-          key={`${p}-${reloadKey[p]}-${url}`}
+          key={`${p}-${reloadKey[p]}-${url}-${p === 'emis' && settings.desktopEmis ? 'd' : 'm'}`}
           ref={views[p]}
           source={{ uri: url }}
           style={styles.fill}
           injectedJavaScript={injection}
+          injectedJavaScriptBeforeContentLoaded={
+            p === 'emis' && settings.desktopEmis ? desktopViewportJs(DESKTOP_WIDTH) : undefined
+          }
+          scalesPageToFit
+          setBuiltInZoomControls
+          setDisplayZoomControls={false}
           injectedJavaScriptForMainFrameOnly
           onMessage={onMessage(p)}
           onNavigationStateChange={onNav(p)}
@@ -290,6 +324,7 @@ function Main() {
         }}
         onClearData={clearHelperData}
         onClearLogs={() => setLogs([])}
+        onShareLogs={shareLogs}
       />
     </SafeAreaView>
   );
@@ -320,6 +355,7 @@ function SettingsModal(props: {
   onSave: (s: Settings) => void;
   onClearData: () => void;
   onClearLogs: () => void;
+  onShareLogs: () => void;
 }) {
   const [draft, setDraft] = useState(props.settings);
   useEffect(() => {
@@ -362,6 +398,11 @@ function SettingsModal(props: {
             onChange={split => setDraft({ ...draft, split })}
           />
           <ToggleRow
+            label="عرض EMIS بوضع الكمبيوتر (جرّبه إن فشل اختيار القوائم مثل الديانة واللغة الأم)"
+            value={draft.desktopEmis}
+            onChange={desktopEmis => setDraft({ ...draft, desktopEmis })}
+          />
+          <ToggleRow
             label="الانتقال تلقائياً إلى EMIS عند «ابدأ» والعودة بعد الحفظ"
             value={draft.autoSwitch}
             onChange={autoSwitch => setDraft({ ...draft, autoSwitch })}
@@ -380,8 +421,12 @@ function SettingsModal(props: {
             <Text style={styles.btnText}>مسح بيانات المساعد (الطالب المحفوظ ومكان الشريط)</Text>
           </Pressable>
 
+          <Pressable style={[styles.btn, { backgroundColor: C.blue }]} onPress={props.onShareLogs}>
+            <Text style={styles.btnText}>📤 مشاركة السجل الكامل (لإرساله للدعم)</Text>
+          </Pressable>
+
           <View style={styles.logHead}>
-            <Text style={styles.label}>سجل الأخطاء ({props.logs.length})</Text>
+            <Text style={styles.label}>أخطاء المساعد ({props.logs.length})</Text>
             <Pressable onPress={props.onClearLogs}>
               <Text style={{ color: C.blue }}>مسح</Text>
             </Pressable>

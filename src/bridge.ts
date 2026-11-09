@@ -10,7 +10,8 @@ import { USERSCRIPT_SOURCE } from './userscript.generated';
 export type BridgeMessage =
   | { __gm: 'hello' }
   | { __gm: 'set'; k: string; v: unknown }
-  | { __gm: 'log'; level: string; msg: string };
+  | { __gm: 'log'; level: string; msg: string }
+  | { __gm: 'bar'; text: string };
 
 const SITE_HOSTS_LINE = "const MY_SITE_HOSTS = ['studentgate-kbbtktoc.manus.space'];";
 const EMIS_HOSTS_LINE = "const EMIS_HOSTS = ['emis.moedu.gov.iq'];";
@@ -70,6 +71,9 @@ const SHIM = String.raw`
     var orig = console[lvl];
     console[lvl] = function () {
       try {
+        // أخطاء المساعد فقط (رسائل الموقع نفسه مثل 401 لا تفيد)
+        var first = String(arguments[0] || '');
+        if (first.indexOf('[EMIS') !== 0 && first.indexOf('[GM') !== 0) return orig.apply(console, arguments);
         post({ __gm: 'log', level: lvl, msg: Array.prototype.map.call(arguments, function (a) {
           return a && a.stack ? a.stack : String(a);
         }).join(' ').slice(0, 2000) });
@@ -77,6 +81,16 @@ const SHIM = String.raw`
       return orig.apply(console, arguments);
     };
   });
+  // نسخة من سجل الشريط الأزرق تُرسل للتطبيق (لزر «مشاركة السجل»)
+  var lastBar = '';
+  setInterval(function () {
+    try {
+      var ui = document.getElementById('emis-helper-ui');
+      if (!ui) return;
+      var t = ui.innerText || '';
+      if (t !== lastBar) { lastBar = t; post({ __gm: 'bar', text: t.slice(-6000) }); }
+    } catch (e) { /* ignore */ }
+  }, 1500);
   post({ __gm: 'hello' });
   // احتياط: إن لم يرد التطبيق خلال 3 ثوانٍ نشغّل السكربت بالقيم الحالية
   setTimeout(function () { window.__gmBridge.boot(); }, 3000);
@@ -91,6 +105,41 @@ export function buildInjection(siteHosts: string[], emisHosts: string[]): string
     patchedUserscript(siteHosts, emisHosts) +
     '\n};\ntrue;'
   );
+}
+
+/**
+ * وضع الكمبيوتر: تُعرض الصفحة بعرض شاشة كمبيوتر (مثل المتصفح على الحاسوب)
+ * حتى تفتح القوائم المنسدلة تحت الحقل كما اعتاد السكربت، ويُكبَّر الشريط الأزرق ليبقى سهل الضغط.
+ * يُحقن قبل تحميل الصفحة.
+ */
+export function desktopViewportJs(width: number): string {
+  return String.raw`
+(function () {
+  var W = ${width};
+  function fix() {
+    try {
+      var m = document.querySelector('meta[name=viewport]');
+      if (!m) {
+        m = document.createElement('meta');
+        m.name = 'viewport';
+        (document.head || document.documentElement).appendChild(m);
+      }
+      var c = 'width=' + W;
+      if (m.getAttribute('content') !== c) m.setAttribute('content', c);
+      if (!document.getElementById('emis-desktop-style') && (document.head || document.documentElement)) {
+        var z = Math.max(1, Math.min(4, W / (screen.width || 400)));
+        var st = document.createElement('style');
+        st.id = 'emis-desktop-style';
+        st.textContent = '#emis-helper-ui{transform:scale(' + z.toFixed(2) + ');transform-origin:top left;}';
+        (document.head || document.documentElement).appendChild(st);
+      }
+    } catch (e) { /* ignore */ }
+  }
+  fix();
+  document.addEventListener('DOMContentLoaded', fix);
+  var n = 0, iv = setInterval(function () { fix(); if (++n > 40) clearInterval(iv); }, 250);
+})();
+true;`;
 }
 
 /** رد التطبيق على «hello»: يرسل كل القيم المحفوظة ثم يشغّل السكربت */
