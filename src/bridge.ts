@@ -11,7 +11,8 @@ export type BridgeMessage =
   | { __gm: 'hello' }
   | { __gm: 'set'; k: string; v: unknown }
   | { __gm: 'log'; level: string; msg: string }
-  | { __gm: 'bar'; text: string };
+  | { __gm: 'bar'; name: string; log: string }
+  | { __gm: 'act'; action: string; ok: boolean };
 
 const SITE_HOSTS_LINE = "const MY_SITE_HOSTS = ['studentgate-kbbtktoc.manus.space'];";
 const EMIS_HOSTS_LINE = "const EMIS_HOSTS = ['emis.moedu.gov.iq'];";
@@ -125,15 +126,19 @@ const SHIM = String.raw`
   }, true);
 
   // نسخة من سجل الشريط الأزرق تُرسل للتطبيق (لزر «مشاركة السجل»)
+  // (يعمل حتى لو كان الشريط مخفياً: نقرأ textContent)
   var lastBar = '';
   setInterval(function () {
     try {
       var ui = document.getElementById('emis-helper-ui');
-      if (!ui) return;
-      var t = ui.innerText || '';
-      if (t !== lastBar) { lastBar = t; post({ __gm: 'bar', text: t.slice(-6000) }); }
+      var body = ui && ui.children[1];
+      if (!body) return;
+      var name = (body.children[0] && body.children[0].textContent) || '';
+      var log = (body.lastElementChild && body.lastElementChild.textContent) || '';
+      var key = name + '\u0001' + log;
+      if (key !== lastBar) { lastBar = key; post({ __gm: 'bar', name: name, log: log.slice(-6000) }); }
     } catch (e) { /* ignore */ }
-  }, 1500);
+  }, 700);
   post({ __gm: 'hello' });
   // احتياط: إن لم يرد التطبيق خلال 3 ثوانٍ نشغّل السكربت بالقيم الحالية
   setTimeout(function () { window.__gmBridge.boot(); }, 3000);
@@ -141,8 +146,12 @@ const SHIM = String.raw`
 `;
 
 /** السكربت الذي يُحقن في كل صفحة (موقع الطلاب و EMIS) */
-export function buildInjection(siteHosts: string[], emisHosts: string[]): string {
+export function buildInjection(siteHosts: string[], emisHosts: string[], hideBar: boolean): string {
+  const hide = hideBar
+    ? "(function(){try{var st=document.createElement('style');st.textContent='#emis-helper-ui{display:none!important}';(document.head||document.documentElement).appendChild(st);}catch(e){}})();\n"
+    : '';
   return (
+    hide +
     SHIM +
     '\nwindow.__gmBoot = function () {\n' +
     patchedUserscript(siteHosts, emisHosts) +
@@ -183,6 +192,22 @@ export function desktopViewportJs(width: number): string {
   var n = 0, iv = setInterval(function () { fix(); if (++n > 40) clearInterval(iv); }, 250);
 })();
 true;`;
+}
+
+/**
+ * الضغط على زر في شريط المساعد (حتى لو كان مخفياً) من لوحة التطبيق.
+ * label: جزء من نص الزر (مثل «ابدأ» أو «تمت المراجعة»). يرد بـ {__gm:'act'}.
+ */
+export function clickBarJs(action: string, label: string): string {
+  return (
+    '(function(){var ok=false;try{var ui=document.getElementById("emis-helper-ui");' +
+    'var b=ui&&[].slice.call(ui.querySelectorAll("button")).find(function(x){return x.textContent.indexOf(' +
+    JSON.stringify(label) +
+    ')>-1;});if(b){b.click();ok=true;}}catch(e){}' +
+    'try{window.ReactNativeWebView.postMessage(JSON.stringify({__gm:"act",action:' +
+    JSON.stringify(action) +
+    ',ok:ok}))}catch(e){}})();true;'
+  );
 }
 
 /** رد التطبيق على «hello»: يرسل كل القيم المحفوظة ثم يشغّل السكربت */
