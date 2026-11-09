@@ -347,7 +347,8 @@ function Main() {
     // بيانات الطالب للسكربت في EMIS ثم أمر «جديد + تعبئة + حفظ»
     gmSet(K_DATA, JSON.stringify({ ...item.d, reviewed: false }), 'emis');
     gmSet(K_STATUS, '', 'emis');
-    gmSet(K_CMD, JSON.stringify({ mode: 'new', t: Date.now() }), 'emis');
+    // «ابدأ»: تعبئة الاستمارة الجديدة التي فتحتها أنت. 🤖: يفتح «جديد» بنفسه
+    gmSet(K_CMD, JSON.stringify({ mode: settingsRef.current.autoPilot ? 'new' : 'fillNew', t: Date.now() }), 'emis');
     setPhase('filling');
     setDetail('');
     lastActivity.current = Date.now();
@@ -369,16 +370,10 @@ function Main() {
       setTimeout(nextStudent, 700);
       return;
     }
-    // بعد حفظ كل طالب نتوقف، ونفتح «جديد» في EMIS ليكون جاهزاً عندما تضغط «ابدأ»
+    // بعد حفظ كل طالب نتوقف تماماً: أنت تضغط «جديد» في EMIS ثم «ابدأ»
     stopQueue();
-    setTimeout(openNextNew, 1500);
-  };
-
-  const openNextNew = () => {
-    if (runningRef.current) return;
-    gmSet(K_STATUS, '', 'emis');
-    gmSet(K_CMD, JSON.stringify({ mode: 'newOnly', t: Date.now() }), 'emis');
-    setDetail('حُفظ الطالب ✔ · فتح «جديد» للطالب التالي...');
+    const next = queueRef.current.find(i => i.status === 'pending');
+    setDetail(next ? `حُفظ ✔ — اضغط «جديد» في EMIS ثم «ابدأ» للطالب التالي: ${nameOf(next)}` : 'حُفظ ✔ — انتهت القائمة');
   };
 
   const onEmisStatus = (raw: string) => {
@@ -398,6 +393,16 @@ function Main() {
     }
     if (!currentKey.current) return;
     lastActivity.current = Date.now();
+    if ((st as { needNew?: boolean }).needNew) {
+      // لم تُفتح استمارة جديدة بعد: الطالب يبقى بانتظار التسجيل
+      updateItem(currentKey.current, { status: 'pending', note: '' });
+      currentKey.current = null;
+      stopQueue();
+      setPhase('idle');
+      setDetail('اضغط «جديد» في EMIS أولاً، ثم «ابدأ»');
+      toast('اضغط «جديد» في EMIS أولاً');
+      return;
+    }
     if (st.saved && !(st.miss && st.miss.length)) {
       finishCurrent(`${st.ok || 0} حقل · ${hhmm()}`);
       return;

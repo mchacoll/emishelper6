@@ -1,7 +1,7 @@
 // ==UserScript==
-// @name         مساعد EMIS – تعبئة تلقائية (v7.7.4)
+// @name         مساعد EMIS – تعبئة تلقائية (v7.7.5)
 // @namespace    emis-helper
-// @version      7.7.4
+// @version      7.7.5
 // @description  تعبئة تلقائية لـ EMIS + حفظ + «تمت المراجعة» + فتح «جديد» + نقل «الاحتياجات الخاصة» من EMIS إلى موقعك
 // @match        *://*/*
 // @grant        GM_setValue
@@ -315,7 +315,7 @@
     ui.dir = 'rtl';
 
     const head = mk('div', 'display:flex;justify-content:space-between;align-items:center;gap:8px');
-    head.appendChild(mk('b', 'font-size:13.5px;', title + ' v7.7.4'));
+    head.appendChild(mk('b', 'font-size:13.5px;', title + ' v7.7.5'));
     const minBtn = mk('button',
       'background:none;border:0;color:#fff;font-size:22px;' +
       'min-width:32px;min-height:32px;cursor:pointer;padding:0;line-height:1;', '−');
@@ -2730,7 +2730,18 @@
         }
         const data = loadData(api); if (!data) return;
         let r;
-        if (cmd.mode === 'page2') r = await fillPage2(data, api.addLog);
+        // (v7.7.5) «ابدأ» من التطبيق: تعبئة الاستمارة الجديدة المفتوحة فقط (أنت تضغط «جديد» بنفسك)
+        if (cmd.mode === 'fillNew') {
+          const fc = findControl(['اسم الأب']);
+          if (!fc || clean(fc.value || '')) {
+            const info = '⚠️ لا توجد استمارة جديدة فارغة — اضغط «جديد» في EMIS ثم «ابدأ»';
+            api.addLog(info);
+            gmSet(K_STATUS, JSON.stringify({ ok: 0, miss: [info], needNew: true, t: Date.now() }));
+            return;
+          }
+          r = await fillBoth(data, api.addLog);
+        }
+        else if (cmd.mode === 'page2') r = await fillPage2(data, api.addLog);
         else if (cmd.mode === 'new') {
           if (await openNewForm(api.addLog)) r = await fillBoth(data, api.addLog);
           else {
