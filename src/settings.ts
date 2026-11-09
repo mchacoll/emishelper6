@@ -7,6 +7,7 @@ export type Settings = {
   desktopUA: boolean; // تعريف EMIS بأننا متصفح كمبيوتر (القوائم تفتح تحت الحقل بدل نافذة)
   autoFillNext: boolean; // بعد «تمت المراجعة»: فتح «جديد» في EMIS وتعبئته تلقائياً
   showPageBar: boolean; // إظهار الشريط الأزرق داخل الصفحات (القديم)
+  directApi: boolean; // التسجيل المباشر عبر خادم EMIS (بدون ملء الاستمارة)
   autoPilot: boolean; // الإضافة التلقائية: مراقبة موقع الطلاب وإدخال كل استمارة جديدة في EMIS
   autoPilotMinutes: number; // كل كم دقيقة يُفحص موقع الطلاب
   onboarded: boolean;
@@ -21,6 +22,7 @@ export const DEFAULT_SETTINGS: Settings = {
   desktopUA: true,
   autoFillNext: false,
   showPageBar: false,
+  directApi: false,
   autoPilot: false,
   autoPilotMinutes: 2,
   onboarded: false,

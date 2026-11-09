@@ -608,7 +608,8 @@ function Main() {
     gmSet(K_DATA, JSON.stringify({ ...item.d, reviewed: false }), 'emis');
     gmSet(K_STATUS, '', 'emis');
     // «ابدأ»: تعبئة الاستمارة الجديدة التي فتحتها أنت. 🤖: يفتح «جديد» بنفسه
-    gmSet(K_CMD, JSON.stringify({ mode: settingsRef.current.autoPilot ? 'new' : 'fillNew', t: Date.now() }), 'emis');
+    const mode = settingsRef.current.directApi ? 'api' : settingsRef.current.autoPilot ? 'new' : 'fillNew';
+    gmSet(K_CMD, JSON.stringify({ mode, t: Date.now() }), 'emis');
     setPhase('filling');
     setDetail('');
     lastActivity.current = Date.now();

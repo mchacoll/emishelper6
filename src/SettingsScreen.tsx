@@ -86,6 +86,23 @@ export function SettingsScreen(props: {
           <SectionTitle>طريقة العمل</SectionTitle>
           <Card>
             <SettingRow
+              icon="lightning-bolt"
+              title="التسجيل المباشر (سريع)"
+              subtitle="يضيف الطالب في EMIS مباشرة خلال ثانية بدون ملء الاستمارة. لا ترى الاستمارة قبل الحفظ. إن رفض EMIS الطالب يظهر السبب ولا يُضاف."
+              value={d.directApi}
+              onChange={v => {
+                if (!v) return set('directApi', false);
+                Alert.alert(
+                  'التسجيل المباشر',
+                  'سيُضاف الطالب في EMIS الحقيقي مباشرة عند ضغط «ابدأ» دون عرض الاستمارة. جرّبه على طالب واحد أولاً وتأكد منه في قائمة EMIS.',
+                  [
+                    { text: 'إلغاء', style: 'cancel' },
+                    { text: 'تفعيل', onPress: () => set('directApi', true) },
+                  ],
+                );
+              }}
+            />
+            <SettingRow
               icon="swap-horizontal"
               title="التنقل التلقائي بين الشاشتين"
               subtitle="عرض EMIS تلقائياً أثناء التسجيل."

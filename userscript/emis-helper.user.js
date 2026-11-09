@@ -1,7 +1,7 @@
 // ==UserScript==
-// @name         مساعد EMIS – تعبئة تلقائية (v8.0.1)
+// @name         مساعد EMIS – تعبئة تلقائية (v8.1.0)
 // @namespace    emis-helper
-// @version      8.0.1
+// @version      8.1.0
 // @description  تعبئة تلقائية لـ EMIS + حفظ + «تمت المراجعة» + فتح «جديد» + نقل «الاحتياجات الخاصة» من EMIS إلى موقعك
 // @match        *://*/*
 // @grant        GM_setValue
@@ -315,7 +315,7 @@
     ui.dir = 'rtl';
 
     const head = mk('div', 'display:flex;justify-content:space-between;align-items:center;gap:8px');
-    head.appendChild(mk('b', 'font-size:13.5px;', title + ' v8.0.1'));
+    head.appendChild(mk('b', 'font-size:13.5px;', title + ' v8.1.0'));
     const minBtn = mk('button',
       'background:none;border:0;color:#fff;font-size:22px;' +
       'min-width:32px;min-height:32px;cursor:pointer;padding:0;line-height:1;', '−');
@@ -3021,6 +3021,151 @@
       });
     };
 
+    /* ---------- (v8.1) التسجيل المباشر: إضافة الطالب عبر خادم EMIS (كما في تطبيق «مساعد EMIS» الأول) ---------- */
+    const apiCache = {};
+    async function emisApi(path, body) {
+      let token = emisToken();
+      if (!token) throw new Error('لا يوجد تسجيل دخول في EMIS');
+      let last = '';
+      for (let attempt = 0; attempt < (body ? 1 : 3); attempt++) {
+        let res;
+        try {
+          res = await fetch('/api' + path, {
+            method: body ? 'POST' : 'GET',
+            headers: { Authorization: 'Bearer ' + token, Accept: 'application/json, text/plain, */*', ...(body ? { 'Content-Type': 'application/json' } : {}) },
+            body: body ? JSON.stringify(body) : undefined,
+          });
+        } catch (e) { if (body) throw new Error('انقطع الاتصال أثناء الإرسال — تحقق في EMIS هل أُضيف الطالب قبل الإعادة'); last = 'network'; await sleep(700); continue; }
+        const txt = await res.text();
+        let j = null; try { j = JSON.parse(txt); } catch { /* ignore */ }
+        if (res.ok) return j;
+        last = (j && (j.message || j.error || j.title)) || txt.slice(0, 200) || ('HTTP ' + res.status);
+        if (j && j.errors) { try { last += ' ' + JSON.stringify(j.errors).slice(0, 300); } catch { /* ignore */ } }
+        if (res.status === 401 && !body) { await sleep(900); token = emisToken() || token; continue; }
+        break;
+      }
+      throw new Error(last || 'فشل الطلب');
+    }
+    const unwrap = v => (v && typeof v === 'object' && !Array.isArray(v) && v.data != null ? v.data : v);
+    const oVal = x => String(x.value ?? x.id ?? x.code ?? '');
+    const oTxt = x => String(x.displayName ?? x.label ?? x.name ?? x.text ?? oVal(x));
+    async function optList(path) {
+      if (apiCache[path]) return apiCache[path];
+      const raw = unwrap(await emisApi(path));
+      const list = Array.isArray(raw) ? raw.filter(x => x && typeof x === 'object') : [];
+      if (list.length) apiCache[path] = list;
+      return list;
+    }
+    // يطابق خياراً من قائمة EMIS بنفس قواعد اختيار القوائم في الاستمارة، ويعيد قيمته
+    function optPick(list, cands) {
+      const opts = list.map(x => ({ el: x, text: oTxt(x) }));
+      const best = pickOption(opts, [].concat(cands).filter(c => isMatcher(c) || !isEmpty(c)));
+      return best ? best.el : null;
+    }
+    const kids = n => { const r = n.children ?? n.items ?? n.subItems ?? n.childs; return Array.isArray(r) ? r : []; };
+
+    async function registerApi(d, log) {
+      const fail = why => { log('✖ ' + why); return { ok: 0, saved: false, miss: [why], api: true }; };
+      const sm = location.pathname.match(/schools\/(\d+)/);
+      if (!sm) return fail('افتح «إدارة الطلاب» للمدرسة في EMIS أولاً');
+      const schoolId = +sm[1];
+      const S = v => clean(String(v ?? ''));
+      if (!S(d.name) || !S(d.father) || !S(d.grandfather)) return fail('الاسم الثلاثي ناقص');
+      const dob = formatDate(S(d.dob), DATE_FORMAT, true);
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(dob)) return fail('تاريخ التولد ناقص أو غير مفهوم: ' + S(d.dob));
+
+      log('🔗 التسجيل المباشر: تجهيز البيانات...');
+      const enc = encodeURIComponent;
+      const [genders, countries, langs, bloods, religions, econ, stages] = await Promise.all([
+        optList('/selectoption/Gender'), optList('/selectoption/' + enc('بلد الولادة')), optList('/selectoption/' + enc('لغة')),
+        optList('/selectoption/' + enc('فصيلة الدم')), optList('/selectoption/' + enc('الديانة')), optList('/selectoption/' + enc('حالة الاقتصادية')),
+        optList('/selectoption/getAvailableStagesForStudent?schoolId=' + schoolId),
+      ]);
+
+      // الجنس
+      const gk = genderOf(genderCandidates(d.gender, d.school)[0]);
+      const gOpt = genders.find(x => optGender(oTxt(x)) === gk);
+      const gender = gOpt ? (parseInt(oVal(gOpt), 10) || (gk === 'f' ? 2 : 1)) : (gk === 'f' ? 2 : 1);
+      // البلد / اللغة / الديانة / فئة الدم / المستوى المعيشي
+      const iraq = optPick(countries, ['العراق']);
+      const country = iraq ? oVal(iraq) : 'العراق';
+      const mtC = langCandidates(d.motherTongue);
+      if (!mtC) return fail('اللغة الأم فارغة في الاستمارة');
+      const mt = optPick(langs, mtC);
+      if (!mt) return fail('اللغة الأم غير موجودة في EMIS: ' + S(d.motherTongue));
+      const sl = optPick(langs, [DEFAULTS.studyLanguage, 'عربي']);
+      const rel = optPick(religions, religionCandidates(d.religion));
+      if (!rel) return fail('الديانة غير موجودة في EMIS: ' + S(d.religion));
+      const bC = bloodCandidates(d.blood);
+      const blood = bC ? optPick(bloods, bC) : null;
+      const lv = livingValue(d.living);
+      const lk = lv ? livingKind(lv) : '';
+      const eco = lv ? (econ.find(x => lk && livingKind(oTxt(x)) === lk) || optPick(econ, [lv])) : null;
+      // الصف والشعبة
+      const gC = gradeCandidates(d.grade);
+      if (!gC) return fail('الصف الدراسي فارغ في الاستمارة');
+      const stage = optPick(stages, gC);
+      if (!stage) return fail('الصف «' + S(d.grade) + '» غير موجود في صفوف المدرسة في EMIS (' + stages.map(oTxt).slice(0, 8).join('، ') + ')');
+      const stageId = parseInt(oVal(stage), 10);
+      let classRoomId = null, roomTxt = '';
+      const sec = S(d.section).replace(/^(الشعبة|شعبة)\s*/, '');
+      if (sec) {
+        const rooms = await optList('/selectoption/getClassRooms?schoolId=' + schoolId + '&stageId=' + stageId);
+        let k = secNorm(sec); if (/^[a-e]$/.test(k)) k = SECTION_ALT[k];
+        const room = rooms.find(x => { const t = secNorm(clean(oTxt(x)).replace(/^(الشعبة|شعبة|section)\s*/i, '')); return t === k || SECTION_ALT[t] === k; });
+        if (!room) return fail('الشعبة «' + sec + '» غير موجودة في EMIS لهذا الصف (' + rooms.map(oTxt).join('، ') + ')');
+        classRoomId = parseInt(oVal(room), 10); roomTxt = oTxt(room);
+      }
+      // المكان: العراق ← ديالى ← خانقين ← مركز قضاء خانقين
+      let nodes = unwrap(apiCache.tree || (apiCache.tree = await emisApi('/CountryStructure/getcountrystructure')));
+      nodes = Array.isArray(nodes) ? nodes : [];
+      let placeId = null, depth = 0;
+      for (const name of DEFAULTS.placeChain) {
+        const want = norm(name);
+        const hit = nodes.find(x => norm(oTxt(x)) === want) || nodes.find(x => norm(oTxt(x)).includes(want));
+        if (!hit) break;
+        placeId = parseInt(oVal(hit), 10); depth++; nodes = kids(hit);
+      }
+      if (!placeId || depth < 3) return fail('لم أجد المكان «' + DEFAULTS.placeChain.slice(0, 3).join(' / ') + '» في EMIS');
+      // الهوية
+      const civil = isCivil(d);
+      const digits = t => S(t).replace(/[\u0660-\u0669]/g, x => x.charCodeAt(0) - 0x660);
+      const idNumber = civil ? digits(d.civilId) : digits(d.nationalId).replace(/\D/g, '');
+      if (!idNumber) return fail(civil ? 'رقم هوية الأحوال المدنية فارغ' : 'رقم البطاقة الوطنية فارغ');
+      if (!civil) {
+        const chk = await emisApi('/student/checknationalidnumber?value=' + enc(idNumber));
+        if (chk && chk.isUnique === false) return fail('رقم البطاقة الوطنية مستخدم مسبقاً في EMIS');
+      }
+
+      const payload = {
+        name: S(d.name), fatherName: S(d.father), grandFatherName: S(d.grandfather), fathersGrandFatherName: S(d.greatGrandfather),
+        surName: S((surnameCandidates(d.surname, d.greatGrandfather) || [''])[0]),
+        motherName: S(d.mother), mothersFatherName: S(d.motherFather), mothersGrandFatherName: S(d.motherGrandfather),
+        imageUrl: '', dateOfBirth: dob, gender,
+        nationality: country, countryOfBirth: country, homeTown: '',
+        motherTongue: oVal(mt), maritalStatus: '', bloodGroup: blood ? oVal(blood) : '', religion: oVal(rel),
+        homePhoneNumber: digits(d.phone), notes: '', censusNumber: '', isDisabled: false,
+        identification: {
+          idNumber, issuingCountry: country, idType: civil ? 3 : 12, nameOfDocument: '',
+          recordNumber: civil ? digits(d.civilRecord) : '', pageNumber: civil ? digits(d.civilSheet) : '', issuer: '', issuingDate: null,
+        },
+        fatherIdentification: null, specialNeeds: null,
+        studyLanguage: sl ? oVal(sl) : DEFAULTS.studyLanguage, economicLevel: eco ? oVal(eco) : '',
+        isCoveredBySocialWelfare: yes(d.welfare), isDroppedOutFromSchool: false, lastYearResult: 3,
+        schoolId, stageId, classRoomId, ageExceptionReason: null, genderExceptionReason: null,
+        address: {
+          addressType: 1, countryStructureId: placeId, town: DEFAULTS.city, area: S(d.neighborhood), quarter: S(d.mahalla), street: S(d.alley),
+          apartmentNumber: '', buildingNumber: '', address1: '0', address2: '0', closestLocation: S(d.landmark) || '0',
+          latitude: 0, longitude: 0, schoolPhoneNumber: '', mobilePhoneNumber: '', email: '', website: '',
+        },
+      };
+      log(`📤 إرسال: ${payload.name} ${payload.fatherName} ${payload.grandFatherName} · ${oTxt(stage)}${roomTxt ? ' ' + roomTxt : ''} · ${gender === 2 ? 'أنثى' : 'ذكر'}`);
+      try { await emisApi('/student/addstudent', payload); }
+      catch (e) { return fail('رفض EMIS: ' + (e && e.message ? e.message : e)); }
+      log('✅ أُضيف الطالب في EMIS مباشرة');
+      return { ok: 1, saved: true, miss: [], api: true };
+    }
+
     onChange(K_CMD, cmdRaw => {
       if (!cmdRaw) return;
       let cmd; try { cmd = JSON.parse(cmdRaw); } catch { return; }
@@ -3037,7 +3182,16 @@
         let r;
         // (v7.7.6) «ابدأ» من التطبيق: تعبئة الاستمارة المفتوحة مباشرة (بدون شرط «جديد»)
         //          مثلاً بعد «رقم البطاقة مستخدم مسبقاً» تكمل بطالب آخر على نفس الاستمارة
-        if (cmd.mode === 'fillNew') r = await fillBoth(data, api.addLog);
+        if (cmd.mode === 'api') {
+          try { r = await registerApi(data, api.addLog); }
+          catch (e) {
+            if (e && e.isStop) throw e;
+            const why = 'خطأ في التسجيل المباشر: ' + (e && e.message ? e.message : e);
+            api.addLog('✖ ' + why);
+            r = { ok: 0, saved: false, miss: [why], api: true };
+          }
+        }
+        else if (cmd.mode === 'fillNew') r = await fillBoth(data, api.addLog);
         else if (cmd.mode === 'page2') r = await fillPage2(data, api.addLog);
         else if (cmd.mode === 'new') {
           if (await openNewForm(api.addLog)) r = await fillBoth(data, api.addLog);
