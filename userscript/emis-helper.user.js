@@ -1,7 +1,7 @@
 // ==UserScript==
-// @name         مساعد EMIS – تعبئة تلقائية (v7.6.2)
+// @name         مساعد EMIS – تعبئة تلقائية (v7.6.3)
 // @namespace    emis-helper
-// @version      7.6.2
+// @version      7.6.3
 // @description  تعبئة تلقائية لـ EMIS + حفظ + «تمت المراجعة» + فتح «جديد» + نقل «الاحتياجات الخاصة» من EMIS إلى موقعك
 // @match        *://*/*
 // @grant        GM_setValue
@@ -315,7 +315,7 @@
     ui.dir = 'rtl';
 
     const head = mk('div', 'display:flex;justify-content:space-between;align-items:center;gap:8px');
-    head.appendChild(mk('b', 'font-size:13.5px;', title + ' v7.6.2'));
+    head.appendChild(mk('b', 'font-size:13.5px;', title + ' v7.6.3'));
     const minBtn = mk('button',
       'background:none;border:0;color:#fff;font-size:22px;' +
       'min-width:32px;min-height:32px;cursor:pointer;padding:0;line-height:1;', '−');
@@ -697,6 +697,8 @@
     const rows = [];
     for (const el of document.querySelectorAll(OPT2)) {
       if (inUI(el) || !vis(el) || el.children.length >= 4) continue;
+      // (v7.6.3) ليست خيارات: حقول الاستمارة المجاورة وعناوينها
+      if (el.closest('.q-field,label,mat-form-field') || el.querySelector('input,select,textarea')) continue;
       const text = clean(el.textContent);
       if (!text || text.length > 60) continue;
       const o = el.getBoundingClientRect();
@@ -707,7 +709,7 @@
       if (!overlapX || !(below || above)) continue;
       rows.push({ el, text, d: Math.min(Math.abs(o.top - a.bottom), Math.abs(a.top - o.bottom)) });
     }
-    // (v7.6.2) على الهاتف قد تُفتح القائمة بعيداً عن الحقل (نافذة أعلى الصفحة أو وسطها).
+    // (v7.6.3) على الهاتف قد تُفتح القائمة بعيداً عن الحقل (نافذة أعلى الصفحة أو وسطها).
     // إن كانت هناك قائمة منسدلة مفتوحة نأخذ خياراتها هي أولاً، لا نصوص الحقول المجاورة
     const near = rows.splice(0);
     {
@@ -728,7 +730,7 @@
       .sort((x, y) => x.d - y.d);
   }
 
-  // (v7.6.2) القوائم المنسدلة المفتوحة حالياً (PrimeVue / PrimeNG / Material / Vuetify / Element ...)
+  // (v7.6.3) القوائم المنسدلة المفتوحة حالياً (PrimeVue / PrimeNG / Material / Vuetify / Element ...)
   const OVERLAY_SEL = '[role=listbox],.q-menu,.q-dialog__inner,.q-select__dialog,.q-virtual-scroll__content,.p-select-overlay,.p-dropdown-panel,.p-multiselect-overlay,.p-multiselect-panel,' +
     '.p-autocomplete-overlay,.p-autocomplete-panel,.p-overlay,.p-connected-overlay,.cdk-overlay-pane,.mat-mdc-select-panel,' +
     '.ng-dropdown-panel,.select2-dropdown,.v-overlay__content,.v-menu,.el-select-dropdown,.el-popper,' +
@@ -820,33 +822,50 @@
     return false;
   }
 
+  // (v7.6.3) ما نكتبه في قائمة البحث: النص كاملاً، ثم أطول كلمة فيه (لو اختلفت الكتابة قليلاً في EMIS)
+  function typeWords(c) {
+    const src = typeof c === 'string' ? c : (c && (c.typeHint || c.label)) || '';
+    const s = clean(String(src));
+    if (!s) return [];
+    const out = [s];
+    const words = s.split(/[\s/،,\-]+/).filter(w => w.length >= 3).sort((a, b) => b.length - a.length);
+    if (words[0] && words[0] !== s) out.push(words[0]);
+    const plain = (words[0] || s).replace(/[أإآ]/g, 'ا').replace(/^ال/, '');
+    if (plain.length >= 3 && !out.includes(plain)) out.push(plain);
+    return out;
+  }
+
   async function chooseCustom(ctrl, candidates, flags = {}) {
     const cands = [].concat(candidates).filter(c => isMatcher(c) || !isEmpty(c));
     if (!cands.length) return false;
     let anchor = ctrl.closest(WRAP_SEL) || ctrl;
     if (anchor.getBoundingClientRect().height > 120) anchor = ctrl;
     // (v7.6) الحقول التي تحمل typeSearch (مثل الجنسية) تكتب النص ثم تضغط على النتيجة
-    const canType = (ALLOW_TYPE_IN_LISTS || flags.typeSearch) && isTextInput(ctrl) && !ctrl.readOnly;
+    // (v7.6.3) قوائم البحث (مثل قوائم EMIS: حقل كتابة role=combobox) لا تفتح بالضغط: نكتب ثم نضغط دائماً
+    const searchy = isTextInput(ctrl) && !ctrl.readOnly &&
+      (ctrl.getAttribute('aria-autocomplete') === 'list' || ctrl.type === 'search' || /q-field__input|q-select/.test(String(ctrl.className)));
+    const canType = (ALLOW_TYPE_IN_LISTS || flags.typeSearch || searchy) && isTextInput(ctrl) && !ctrl.readOnly;
     try { ctrl.scrollIntoView?.({ block: 'center' }); } catch { /* ignore */ }
     await sleep(200);
     await closeLists();
 
     // (v7.6) كتابة النص أولاً، انتظار ظهوره في القائمة، ثم الضغط عليه (الجنسية: «العراق»)
-    if (canType && flags.typeSearch) {
+    if (canType && (flags.typeSearch || searchy)) {
       for (const c of cands) {
-        if (typeof c !== 'string') continue;
-        try { ctrl.focus?.(); } catch { /* ignore */ }
-        press(ctrl);
-        await sleep(250);
-        await typeInto(ctrl, c, true);
-        const { opts, best } = await readAndPick(anchor, [c], 14);
-        if (best && await commitOption(best, ctrl, anchor, opts.length === 1)) {
-          if (IS_TOUCH) ctrl.blur?.();
-          await sleep(150);
-          return true;
+        for (const w of typeWords(c)) {
+          try { ctrl.focus?.(); } catch { /* ignore */ }
+          press(ctrl);
+          await sleep(250);
+          await typeInto(ctrl, w, true);
+          const { opts, best } = await readAndPick(anchor, [c], 14);
+          if (best && await commitOption(best, ctrl, anchor, opts.length === 1)) {
+            if (IS_TOUCH) ctrl.blur?.();
+            await sleep(150);
+            return true;
+          }
+          try { await typeInto(ctrl, '', true); } catch (e) { if (e && e.isStop) throw e; }
+          await closeLists();
         }
-        try { await typeInto(ctrl, '', true); } catch (e) { if (e && e.isStop) throw e; }
-        await closeLists();
       }
     }
 
@@ -921,7 +940,7 @@
       if (!(r.right > a.left - 20 && r.left < a.right + 20)) continue;
       out.push({ el: e, k, top: r.top });
     }
-    // (v7.6.2) احتياط للهاتف: الحروف داخل القائمة المفتوحة أينما ظهرت
+    // (v7.6.3) احتياط للهاتف: الحروف داخل القائمة المفتوحة أينما ظهرت
     if (!out.length) {
       for (const box of openOverlays()) {
         for (const e of box.querySelectorAll('*')) {
@@ -1611,6 +1630,7 @@
     if (!want) return null;
     return [{
       label: `${want.type}${want.sign}`,
+      typeHint: want.type,
       test: txt => { const p = parseBlood(txt); return !!p && p.type === want.type && p.sign === want.sign; },
     }];
   }

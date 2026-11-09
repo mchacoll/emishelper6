@@ -497,7 +497,7 @@ function Main() {
   const buildLogText = () => {
     const s = settingsRef.current;
     return [
-      'سجل مساعد EMIS (التطبيق v7.6.1)',
+      'سجل مساعد EMIS (التطبيق v7.6.3)',
       `وضع الكمبيوتر: ${s.desktopEmis ? 'مفعّل' : 'غير مفعّل'} — الشاشتان معاً: ${s.split ? 'نعم' : 'لا'} — تعبئة التالي تلقائياً: ${s.autoFillNext ? 'نعم' : 'لا'}`,
       `الحالة: ${phase} ${detail}`,
       '',
