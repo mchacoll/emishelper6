@@ -6,12 +6,18 @@ on:
     branches: [main, 'claude/**']
     paths-ignore: ['**.md']
 
+permissions:
+  contents: write # لنشر الإصدار (التحديث من داخل التطبيق)
+
 jobs:
   build:
     runs-on: ubuntu-latest
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
+
+      - name: Build number
+        run: echo "BUILD_NUMBER=$((1000 + GITHUB_RUN_NUMBER))" >> "$GITHUB_ENV"
 
       - uses: actions/setup-node@v4
         with:
@@ -40,8 +46,39 @@ jobs:
         working-directory: android
         run: ./gradlew assembleRelease --no-daemon -PreactNativeArchitectures=armeabi-v7a,arm64-v8a
 
+      - name: Prepare release files
+        run: |
+          mkdir -p out
+          cp android/app/build/outputs/apk/release/app-release.apk out/emishelper.apk
+          cp userscript/emis-helper.user.js out/emis-helper.user.js
+          node -e '
+            const fs = require("fs");
+            const app = require("./app.json").expo;
+            const rel = JSON.parse(fs.readFileSync("release.json", "utf8"));
+            const sv = (fs.readFileSync("userscript/emis-helper.user.js", "utf8").match(/@version\s+([\d.]+)/) || [])[1];
+            const m = { version: app.version, versionCode: Number(process.env.BUILD_NUMBER), scriptVersion: sv,
+                        scriptMinBuild: rel.scriptMinBuild || 0, notes: rel.notes || [] };
+            fs.writeFileSync("out/version.json", JSON.stringify(m, null, 2));
+            fs.writeFileSync("out/notes.md", m.notes.map(n => "- " + n).join("\n") + "\n");
+            fs.appendFileSync(process.env.GITHUB_ENV, "APP_VERSION=" + app.version + "\n");
+            console.log(m);
+          '
+
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
           name: emishelper-apk
-          path: android/app/build/outputs/apk/release/*.apk
+          path: out/emishelper.apk
+
+      - name: Publish release (in-app update)
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ env.APP_VERSION }}-b${{ env.BUILD_NUMBER }}
+          name: مساعد EMIS v${{ env.APP_VERSION }} (بناء ${{ env.BUILD_NUMBER }})
+          target_commitish: ${{ github.sha }}
+          make_latest: 'true'
+          body_path: out/notes.md
+          files: |
+            out/emishelper.apk
+            out/version.json
+            out/emis-helper.user.js

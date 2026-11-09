@@ -18,8 +18,8 @@ const SITE_HOSTS_LINE = "const MY_SITE_HOSTS = ['studentgate-kbbtktoc.manus.spac
 const EMIS_HOSTS_LINE = "const EMIS_HOSTS = ['emis.moedu.gov.iq'];";
 
 /** يستبدل نطاقَي موقع الطلاب و EMIS في السكربت بما يحدده المستخدم في الإعدادات */
-function patchedUserscript(siteHosts: string[], emisHosts: string[]): string {
-  let src = USERSCRIPT_SOURCE;
+function patchedUserscript(siteHosts: string[], emisHosts: string[], source?: string): string {
+  let src = source || USERSCRIPT_SOURCE;
   if (siteHosts.length) src = src.replace(SITE_HOSTS_LINE, 'const MY_SITE_HOSTS = ' + JSON.stringify(siteHosts) + ';');
   if (emisHosts.length) src = src.replace(EMIS_HOSTS_LINE, 'const EMIS_HOSTS = ' + JSON.stringify(emisHosts) + ';');
   return src;
@@ -147,7 +147,7 @@ const SHIM = String.raw`
 `;
 
 /** السكربت الذي يُحقن في كل صفحة (موقع الطلاب و EMIS) */
-export function buildInjection(siteHosts: string[], emisHosts: string[], hideBar: boolean): string {
+export function buildInjection(siteHosts: string[], emisHosts: string[], hideBar: boolean, source?: string): string {
   const hide = hideBar
     ? "window.__gmHideBar=true;(function(){try{var st=document.createElement('style');st.textContent='#emis-helper-ui{display:none!important}';(document.head||document.documentElement).appendChild(st);}catch(e){}})();\n"
     : '';
@@ -155,7 +155,7 @@ export function buildInjection(siteHosts: string[], emisHosts: string[], hideBar
     hide +
     SHIM +
     '\nwindow.__gmBoot = function () {\n' +
-    patchedUserscript(siteHosts, emisHosts) +
+    patchedUserscript(siteHosts, emisHosts, source) +
     '\n};\ntrue;'
   );
 }

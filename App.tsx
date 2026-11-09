@@ -20,6 +20,8 @@ import {
 } from './src/bridge';
 import { ControlPanel, type Phase, type QItem } from './src/ControlPanel';
 import { Onboarding } from './src/Onboarding';
+import { UpdateModal } from './src/UpdateModal';
+import { fetchManifest, installedBuild, installedVersion, loadScript, type Manifest, updateScript } from './src/updater';
 import { DEFAULT_SETTINGS, normUrl, type Settings } from './src/settings';
 import { type LogLine, SettingsScreen } from './src/SettingsScreen';
 import { colors, ROW } from './src/theme';
@@ -27,7 +29,7 @@ import { Icon, IconButton, type IconName, T } from './src/ui';
 
 type Pane = 'site' | 'emis';
 
-const APP_VERSION = '7.7.0';
+const APP_VERSION = installedVersion() || '7.7.1';
 const K_SETTINGS = 'app_settings_v1';
 const K_STORE = 'gm_store_v1';
 const K_QUEUE_APP = 'app_queue_v1'; // قائمة التسجيل في التطبيق
@@ -81,6 +83,8 @@ function Main() {
   const [detail, setDetail] = useState('');
   const [syncText, setSyncText] = useState('');
   const [apNote, setApNote] = useState('');
+  const [script, setScript] = useState<{ source: string; version: string } | null>(null);
+  const [update, setUpdate] = useState<Manifest | null>(null);
 
   // قائمة التسجيل
   const [queue, setQueueState] = useState<QItem[]>([]);
@@ -147,6 +151,7 @@ function Main() {
       } catch {
         /* ignore */
       }
+      setScript(await loadScript());
       setReady(true);
     })();
   }, []);
@@ -167,8 +172,43 @@ function Main() {
   const injection = useMemo(() => {
     const siteHost = hostOf(normUrl(settings.siteUrl));
     const emisHost = hostOf(normUrl(settings.emisUrl));
-    return buildInjection(siteHost ? [siteHost] : [], emisHost ? [emisHost] : [], !settings.showPageBar);
-  }, [settings.siteUrl, settings.emisUrl, settings.showPageBar]);
+    return buildInjection(siteHost ? [siteHost] : [], emisHost ? [emisHost] : [], !settings.showPageBar, script?.source);
+  }, [settings.siteUrl, settings.emisUrl, settings.showPageBar, script]);
+
+  /* ---------- التحديث ---------- */
+  const scriptRef = useRef(script);
+  scriptRef.current = script;
+  const checkUpdates = async (manual: boolean) => {
+    const m = await fetchManifest();
+    if (!m) {
+      if (manual) toast('تعذّر التحقق من التحديث (تحقق من الإنترنت)');
+      return;
+    }
+    if (m.versionCode > installedBuild()) {
+      setUpdate(m);
+      return;
+    }
+    const cur = scriptRef.current?.version || '0';
+    const ns = await updateScript(m, cur);
+    if (ns) {
+      setScript(ns);
+      Alert.alert('تم تحديث السكربت', `السكربت الآن v${ns.version}. إعادة تحميل الصفحتين لتطبيقه؟`, [
+        { text: 'لاحقاً', style: 'cancel' },
+        {
+          text: 'إعادة التحميل',
+          onPress: () => setReloadKey(k => ({ site: k.site + 1, emis: k.emis + 1 })),
+        },
+      ]);
+      return;
+    }
+    if (manual) toast('لديك آخر إصدار');
+  };
+  useEffect(() => {
+    if (!ready) return;
+    const t = setTimeout(() => checkUpdates(false), 4000);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ready]);
 
   const addError = useCallback((pane: Pane, level: string, msg: string) => {
     setErrors(prev => [...prev.slice(-199), { t: Date.now(), pane, level, msg }]);
@@ -204,8 +244,10 @@ function Main() {
     }
   };
   const injectSync = () => {
+    // الطلاب المعروفون للتطبيق لا يُفتحون مرة أخرى (مزامنة سريعة)
+    const known = queueRef.current.filter(i => i.status !== 'skipped').map(i => i.k).concat([...doneKeys.current]);
     siteRef.current?.injectJavaScript(
-      '(function(){var ok=!!window.__emisSync;if(ok)window.__emisSync();' +
+      '(function(){var ok=!!window.__emisSync;if(ok)window.__emisSync(' + JSON.stringify(known) + ');' +
         'try{window.ReactNativeWebView.postMessage(JSON.stringify({__gm:"act",action:"sync:site",ok:ok}))}catch(e){}})();true;',
     );
   };
@@ -235,6 +277,12 @@ function Main() {
       const byKey = new Map(kept.map(i => [i.k, i]));
       for (const f of fresh) {
         const ex = byKey.get(f.k);
+        // طالب معروف (لم يُفتح في المزامنة السريعة): نُبقي بياناته المحفوظة
+        if (!f.d) {
+          if (doneKeys.current.has(f.k)) siteRef.current?.injectJavaScript(`window.__emisMark&&window.__emisMark(${JSON.stringify(f.k)});true;`);
+          if (ex && ex.status === 'skipped') ex.status = 'pending';
+          continue;
+        }
         if (doneKeys.current.has(f.k)) {
           // سُجّل سابقاً في EMIS لكن لم يُحدَّد «تمت المراجعة» في موقعك: نحدده الآن ولا نسجّله مرة أخرى
           siteRef.current?.injectJavaScript(`window.__emisMark&&window.__emisMark(${JSON.stringify(f.k)});true;`);
@@ -710,7 +758,11 @@ function Main() {
           setShowSettings(false);
           setShowGuide(true);
         }}
+        onCheckUpdate={() => checkUpdates(true)}
+        versionText={`التطبيق v${installedVersion()} (بناء ${installedBuild()}) · السكربت v${script?.version || '?'}`}
       />
+
+      <UpdateModal manifest={update} onClose={() => setUpdate(null)} />
 
       <Onboarding
         visible={showGuide}

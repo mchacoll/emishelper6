@@ -20,6 +20,8 @@ export function SettingsScreen(props: {
   onShareLogs: () => void;
   onShowGuide: () => void;
   onDiagnose: () => void;
+  onCheckUpdate: () => void;
+  versionText: string;
 }) {
   const [d, setD] = useState(props.settings);
   useEffect(() => {
@@ -167,6 +169,12 @@ export function SettingsScreen(props: {
             <Button kind="ghost" icon="help-circle-outline" label="طريقة الاستخدام" onPress={props.onShowGuide} compact />
           </Card>
 
+          <SectionTitle>التحديث</SectionTitle>
+          <Card style={{ padding: 14, gap: 10 }}>
+            <T style={{ fontSize: 12, color: colors.muted }}>{props.versionText}</T>
+            <Button kind="soft" icon="cloud-download-outline" label="التحقق من التحديث" onPress={props.onCheckUpdate} compact />
+          </Card>
+
           <SectionTitle>البيانات</SectionTitle>
           <Button
             kind="ghost"
@@ -181,7 +189,7 @@ export function SettingsScreen(props: {
           />
 
           <T style={{ color: colors.muted, fontSize: 12, textAlign: 'center', marginTop: 12 }}>
-            مساعد EMIS · الإصدار 7.7.0
+            مساعد EMIS
           </T>
         </ScrollView>
       </SafeAreaView>
