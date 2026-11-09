@@ -373,7 +373,7 @@ function Main() {
     // بعد حفظ كل طالب نتوقف تماماً: أنت تضغط «جديد» في EMIS ثم «ابدأ»
     stopQueue();
     const next = queueRef.current.find(i => i.status === 'pending');
-    setDetail(next ? `حُفظ ✔ — اضغط «جديد» في EMIS ثم «ابدأ» للطالب التالي: ${nameOf(next)}` : 'حُفظ ✔ — انتهت القائمة');
+    setDetail(next ? `حُفظ ✔ — اضغط «ابدأ» للطالب التالي: ${nameOf(next)}` : 'حُفظ ✔ — انتهت القائمة');
   };
 
   const onEmisStatus = (raw: string) => {
