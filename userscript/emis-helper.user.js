@@ -1,7 +1,7 @@
 // ==UserScript==
-// @name         مساعد EMIS – تعبئة تلقائية (v7.9.0)
+// @name         مساعد EMIS – تعبئة تلقائية (v7.9.1)
 // @namespace    emis-helper
-// @version      7.9.0
+// @version      7.9.1
 // @description  تعبئة تلقائية لـ EMIS + حفظ + «تمت المراجعة» + فتح «جديد» + نقل «الاحتياجات الخاصة» من EMIS إلى موقعك
 // @match        *://*/*
 // @grant        GM_setValue
@@ -315,7 +315,7 @@
     ui.dir = 'rtl';
 
     const head = mk('div', 'display:flex;justify-content:space-between;align-items:center;gap:8px');
-    head.appendChild(mk('b', 'font-size:13.5px;', title + ' v7.9.0'));
+    head.appendChild(mk('b', 'font-size:13.5px;', title + ' v7.9.1'));
     const minBtn = mk('button',
       'background:none;border:0;color:#fff;font-size:22px;' +
       'min-width:32px;min-height:32px;cursor:pointer;padding:0;line-height:1;', '−');
@@ -2407,7 +2407,7 @@
       const exKeys = ((exist && exist.keys) || []).filter(k => k && k.length >= 5);
       const exIds = new Set(((exist && exist.ids) || []).map(String));
       const digits = t => (t || '').replace(/[\u0660-\u0669]/g, d => d.charCodeAt(0) - 0x660);
-      const inEmisRow = txt => exKeys.some(k => txt.includes(k)) || [...digits(txt).matchAll(/\d{10,14}/g)].some(m => exIds.has(m[0]));
+      const inEmisRow = txt => exKeys.some(k => txt.includes(k));   // (v7.9.1) الاسم الرباعي فقط
       let existing = 0;
       syncBusy = true;
       stopRequested = false;
@@ -2442,9 +2442,9 @@
           const c = getCurrent();
           if (c) {
             c.d.reviewed = isReviewedNow();
-            const nid = digits(c.d.nationalId || '').replace(/\D/g, '');
+            const k4 = c.k + norm(c.d.greatGrandfather);
             if (c.d.reviewed) reviewed++;
-            else if (exKeys.includes(c.k) || (nid && exIds.has(nid))) existing++;
+            else if (c.d.greatGrandfather && exKeys.includes(k4)) existing++;
             else if (!seen.has(c.k)) { seen.add(c.k); items.push({ k: c.k, d: c.d }); }
           }
           prog({ running: true, done: i + 1, total, found: items.length, reviewed, existing });
@@ -2541,15 +2541,14 @@
         const list = await trpc('student.listForSchool', { schoolSlug: me.slug });
         if (!Array.isArray(list)) throw new Error('bad-list');
         const exKeys = new Set(((exist && exist.keys) || []).filter(k => k && k.length >= 5));
-        const exIds = new Set(((exist && exist.ids) || []).map(String));
         const items = [], seen = new Set();
         let reviewed = 0, existing = 0;
         for (const rec of list) {
           const d = recordToData(rec, me.name);
           if (d.reviewed) { reviewed++; continue; }
-          const k = norm(d.name) + norm(d.father) + norm(d.grandfather);
-          const nid = String(d.nationalId || '').replace(/[\u0660-\u0669]/g, x => x.charCodeAt(0) - 0x660).replace(/\D/g, '');
-          if (exKeys.has(k) || (nid && exIds.has(nid))) { existing++; continue; }
+          // (v7.9.1) الاسم الرباعي فقط: الاسم + الأب + الجد + جد الأب
+          const k = norm(d.name) + norm(d.father) + norm(d.grandfather) + norm(d.greatGrandfather);
+          if (d.greatGrandfather && exKeys.has(k)) { existing++; continue; }
           if (seen.has(k)) continue;
           seen.add(k);
           items.push({ k, d });
@@ -2830,10 +2829,9 @@
             const txt = rowKey(r);
             if (!txt || seenRows.has(txt)) continue;
             seenRows.add(txt);
-            for (const m of digits(txt).matchAll(/\d{10,14}/g)) ids.add(m[0]);
             for (const c of r.querySelectorAll('td')) {
               const tk = clean(c.innerText || c.textContent || '').split(/\s+/).filter(w => /^[\u0621-\u064A]+$/.test(w));
-              if (tk.length >= 3) keys.add(norm(tk[0]) + norm(tk[1]) + norm(tk[2]));
+              if (tk.length >= 4) keys.add(norm(tk[0]) + norm(tk[1]) + norm(tk[2]) + norm(tk[3]));   // (v7.9.1) الاسم الرباعي فقط
             }
           }
         };
@@ -2929,10 +2927,9 @@
           total = (j && j.meta && j.meta.totalCount) || total;
           for (const st of data) {
             rows++;
+            // (v7.9.1) المطابقة بالاسم الرباعي فقط
             const tk = clean(st.fullName || '').split(/\s+/).filter(w => /^[\u0621-\u064A]+$/.test(w));
-            if (tk.length >= 3) keys.add(norm(tk[0]) + norm(tk[1]) + norm(tk[2]));
-            const nid = String(st.nationalIdNumber || '').replace(/[\u0660-\u0669]/g, x => x.charCodeAt(0) - 0x660).replace(/\D/g, '');
-            if (nid) ids.add(nid);
+            if (tk.length >= 4) keys.add(norm(tk[0]) + norm(tk[1]) + norm(tk[2]) + norm(tk[3]));
           }
           prog({ done: false, rows, total });
           if (!data.length || data.length < per || (total && rows >= total)) break;
