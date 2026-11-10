@@ -20,6 +20,7 @@ import {
   remoteSetJs,
   syncAndBootJs,
 } from './src/bridge';
+import { type CmpItem, type CompareState, CompareScreen } from './src/CompareScreen';
 import { ControlPanel, type Phase, type QItem } from './src/ControlPanel';
 import { type ExcelResult, parseGeneric, parseWorkbook } from './src/excel';
 import { type ExcelData, ExcelScreen } from './src/ExcelScreen';
@@ -49,6 +50,8 @@ const K_SYNC = 'emis_sync_v1';
 const K_MARK = 'emis_mark_v1';
 const K_EXIST = 'emis_existing_v1';
 const K_GSTAT = 'emis_generic_status_v1';
+const K_CMP = 'emis_compare_v1';
+const K_MARKMANY = 'emis_markmany_v1';
 const K_EXCEL_APP = 'app_excel_v1';
 const DESKTOP_WIDTH = 1280;
 // متصفح كمبيوتر: EMIS يفتح القوائم المنسدلة تحت الحقل بدل نافذة ملء الشاشة الخاصة بالهاتف
@@ -106,7 +109,9 @@ function Main() {
   const syncAfterReload = useRef(false);
   const syncReload = useRef(false);
   const syncStep = useRef<'none' | 'emis' | 'site'>('none');
-  const existingRef = useRef<{ keys: string[]; ids: string[]; rows: number } | null>(null);
+  const existingRef = useRef<{ keys: string[]; ids: string[]; names?: string[]; rows: number } | null>(null);
+  const compareStep = useRef<'none' | 'emis' | 'site'>('none');
+  const [cmp, setCmp] = useState<CompareState>({ visible: false, step: 'done', text: '', percent: 0 });
   const syncWarn = useRef('');
   const pendingImport = useRef<(ExcelResult & { fileName: string }) | null>(null);
   const [excel, setExcelState] = useState<ExcelData | null>(null);
@@ -313,8 +318,12 @@ function Main() {
     }
   };
   const onEmisList = (raw: string) => {
+    if (compareStep.current === 'emis') {
+      onCompareEmisList(raw);
+      return;
+    }
     if (!syncingRef.current || syncStep.current !== 'emis') return;
-    let p: { done?: boolean; error?: string; rows?: number; total?: number; keys?: string[]; ids?: string[] };
+    let p: { done?: boolean; error?: string; rows?: number; total?: number; keys?: string[]; ids?: string[]; names?: string[] };
     try {
       p = JSON.parse(raw);
     } catch {
@@ -329,14 +338,14 @@ function Main() {
     if (p.error) {
       syncWarn.current = p.error + ' — زامنت بدون فحص EMIS';
     } else {
-      existingRef.current = { keys: p.keys || [], ids: p.ids || [], rows: p.rows || 0 };
+      existingRef.current = { keys: p.keys || [], ids: p.ids || [], names: p.names || [], rows: p.rows || 0 };
     }
     goSite();
   };
   const injectSync = () => {
     // الطلاب المعروفون للتطبيق لا يُفتحون مرة أخرى، والموجودون في EMIS لا يُزامَنون (مزامنة سريعة)
     const known = queueRef.current.filter(i => i.status !== 'skipped').map(i => i.k).concat([...doneKeys.current]);
-    const ex = existingRef.current ? { keys: existingRef.current.keys, ids: existingRef.current.ids } : null;
+    const ex = existingRef.current ? { keys: existingRef.current.keys, ids: existingRef.current.ids, names: existingRef.current.names || [] } : null;
     siteRef.current?.injectJavaScript(
       '(function(){var ok=!!window.__emisSync;if(ok)window.__emisSync(' + JSON.stringify(known) + ',' + JSON.stringify(ex) + ');' +
         'try{window.ReactNativeWebView.postMessage(JSON.stringify({__gm:"act",action:"sync:site",ok:ok}))}catch(e){}})();true;',
@@ -351,6 +360,120 @@ function Main() {
     setDetail(why);
     setSyncUI(u => ({ ...u, step: 'error', text: why, percent: 0, summary: undefined }));
     lastActivity.current = Date.now();
+  };
+
+  /* ===================== المقارنة مع EMIS ===================== */
+  const injectAct = (pane: Pane, call: string, action: string) => {
+    views[pane].current?.injectJavaScript(
+      '(function(){var ok=false;try{ok=' + call + ';}catch(e){}' +
+        'try{window.ReactNativeWebView.postMessage(JSON.stringify({__gm:"act",action:' + JSON.stringify(action) + ',ok:!!ok}))}catch(e){}})();true;',
+    );
+  };
+  const startCompare = () => {
+    if (syncingRef.current || runningRef.current || compareStep.current !== 'none') return;
+    compareStep.current = 'emis';
+    setCmp(c => ({ ...c, visible: true, step: 'emis', text: 'قراءة طلاب EMIS...', percent: 5, mark: undefined }));
+    injectAct('emis', '!!window.__emisList&&(window.__emisList(),true)', 'cmp-list:emis');
+    const t0 = Date.now();
+    setTimeout(() => {
+      if (compareStep.current === 'emis' && Date.now() - t0 >= 99000) compareFail('انتهت مهلة قراءة EMIS');
+    }, 100000);
+  };
+  const compareFail = (why: string) => {
+    compareStep.current = 'none';
+    setCmp(c => ({ ...c, step: 'error', text: why, percent: 0 }));
+  };
+  const onCompareEmisList = (raw: string) => {
+    let p: { done?: boolean; error?: string; rows?: number; total?: number; keys?: string[]; ids?: string[]; names?: string[] };
+    try {
+      p = JSON.parse(raw);
+    } catch {
+      return;
+    }
+    if (!p.done) {
+      setCmp(c => ({ ...c, text: `قراءة طلاب EMIS... ${p.rows || 0}${p.total ? ' من ' + p.total : ''}`, percent: 5 + (40 * (p.rows || 0)) / Math.max(1, p.total || 1) }));
+      return;
+    }
+    if (p.error) {
+      compareFail(p.error);
+      return;
+    }
+    existingRef.current = { keys: p.keys || [], ids: p.ids || [], names: p.names || [], rows: p.rows || 0 };
+    compareSite();
+  };
+  const compareSite = () => {
+    compareStep.current = 'site';
+    setCmp(c => ({ ...c, step: 'site', text: 'قراءة موقع الطلاب والمقارنة...', percent: 60 }));
+    const ex = existingRef.current;
+    const arg = JSON.stringify({ keys: ex?.keys || [], names: ex?.names || [] });
+    injectAct('site', '!!window.__emisCompare&&(window.__emisCompare(' + arg + '),true)', 'cmp-site:site');
+  };
+  const onCompareResult = (raw: string) => {
+    if (compareStep.current !== 'site') return;
+    compareStep.current = 'none';
+    let r: { ok: boolean; error?: string; school: string; total: number; items: CmpItem[] };
+    try {
+      r = JSON.parse(raw);
+    } catch {
+      return;
+    }
+    if (!r.ok) {
+      compareFail(r.error || 'تعذّرت قراءة موقع الطلاب');
+      return;
+    }
+    setCmp(c => ({
+      ...c,
+      step: 'done',
+      text: '',
+      percent: 100,
+      report: { school: r.school, total: r.total, emisRows: existingRef.current?.rows || 0, items: r.items || [] },
+    }));
+  };
+  const markAllReviewed = (ids: number[]) => {
+    if (!ids.length) return;
+    Alert.alert(
+      'تحديد «تمت المراجعة»',
+      `سيُحدَّد «تمت المراجعة» في موقع الطلاب لـ ${ids.length} طالب موجودين في EMIS (بالاسم الرباعي). متابعة؟`,
+      [
+        { text: 'إلغاء', style: 'cancel' },
+        {
+          text: 'تحديد',
+          onPress: () => {
+            setCmp(c => ({ ...c, mark: { running: true, done: 0, total: ids.length, ok: 0, already: 0, failed: 0 } }));
+            injectAct('site', '!!window.__emisMarkMany&&(window.__emisMarkMany(' + JSON.stringify(ids) + '),true)', 'cmp-mark:site');
+          },
+        },
+      ],
+    );
+  };
+  const onMarkManyProgress = (raw: string) => {
+    let m: { running: boolean; done: number; total: number; ok: number; already: number; failed: number; error?: string };
+    try {
+      m = JSON.parse(raw);
+    } catch {
+      return;
+    }
+    setCmp(c => ({ ...c, mark: m }));
+    if (!m.running) {
+      toast(`حُدّد «تمت المراجعة» لـ ${m.ok} طالب` + (m.failed ? ` · فشل ${m.failed}` : ''));
+      // تحديث النتائج من الموقع (بدون إعادة قراءة EMIS)
+      if (existingRef.current) setTimeout(compareSite, 600);
+    }
+  };
+  const addMissingToQueue = (items: CmpItem[]) => {
+    let added = 0;
+    setQueue(q => {
+      const next = [...q];
+      const keys = new Set(next.map(i => i.k));
+      for (const it of items) {
+        if (!it.d || keys.has(it.k) || doneKeys.current.has(it.k)) continue;
+        next.push({ k: it.k, d: it.d as QItem['d'], status: 'pending', note: 'من المقارنة', t: Date.now() });
+        added++;
+      }
+      return next;
+    });
+    toast(`أُضيف ${added} طالب إلى قائمة التسجيل`);
+    setCmp(c => ({ ...c, visible: false }));
   };
 
   /* ===================== استيراد ملف Excel ===================== */
@@ -784,6 +907,16 @@ function Main() {
           return;
         case 'act': {
           if (m.ok) return;
+          if (m.action === 'cmp-list:emis') {
+            compareFail('المساعد غير جاهز في EMIS — سجّل الدخول وافتح «إدارة الطلاب»');
+            return;
+          }
+          if (m.action === 'cmp-site:site' || m.action === 'cmp-mark:site') {
+            if (m.action === 'cmp-site:site') compareFail('المساعد غير جاهز في موقع الطلاب — افتح صفحة المنسق');
+            else setCmp(c => ({ ...c, mark: undefined }));
+            toast('افتح صفحة المنسق في موقع الطلاب');
+            return;
+          }
           if (m.action === 'generic:emis') {
             setExcelBusy(false);
             toast('افتح EMIS وسجّل الدخول وافتح النموذج، ثم «تعبئة»');
@@ -836,6 +969,14 @@ function Main() {
             } catch {
               /* ignore */
             }
+            return;
+          }
+          if (pane === 'site' && m.k === K_CMP) {
+            if (typeof v === 'string' && v) onCompareResult(v);
+            return;
+          }
+          if (pane === 'site' && m.k === K_MARKMANY) {
+            if (typeof v === 'string' && v) onMarkManyProgress(v);
             return;
           }
           if (pane === 'emis' && m.k === K_GSTAT) {
@@ -1046,6 +1187,7 @@ function Main() {
             emisLog={barLog.emis}
             siteLog={barLog.site}
             onSync={() => startSync(false)}
+            onCompare={startCompare}
             onRun={startQueue}
             onStop={onStop}
             onDoneManual={onDoneManual}
@@ -1091,6 +1233,24 @@ function Main() {
       />
 
       <UpdateModal manifest={update} onClose={() => setUpdate(null)} />
+      <CompareScreen
+        state={cmp}
+        onClose={() => {
+          compareStep.current = 'none';
+          setCmp(c => ({ ...c, visible: false }));
+        }}
+        onRefresh={() => {
+          compareStep.current = 'none';
+          startCompare();
+        }}
+        onMarkAll={markAllReviewed}
+        onAddMissing={addMissingToQueue}
+        onCopy={t =>
+          Clipboard.setStringAsync(t)
+            .then(() => toast('نُسخ التقرير'))
+            .catch(() => {})
+        }
+      />
       <SyncScreen state={syncUI} onClose={() => setSyncUI(u => ({ ...u, visible: false }))} onStop={onStop} />
 
       <Onboarding

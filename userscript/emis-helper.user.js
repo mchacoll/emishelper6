@@ -1,7 +1,7 @@
 // ==UserScript==
-// @name         مساعد EMIS – تعبئة تلقائية (v8.1.0)
+// @name         مساعد EMIS – تعبئة تلقائية (v8.2.0)
 // @namespace    emis-helper
-// @version      8.1.0
+// @version      8.2.0
 // @description  تعبئة تلقائية لـ EMIS + حفظ + «تمت المراجعة» + فتح «جديد» + نقل «الاحتياجات الخاصة» من EMIS إلى موقعك
 // @match        *://*/*
 // @grant        GM_setValue
@@ -315,7 +315,7 @@
     ui.dir = 'rtl';
 
     const head = mk('div', 'display:flex;justify-content:space-between;align-items:center;gap:8px');
-    head.appendChild(mk('b', 'font-size:13.5px;', title + ' v8.1.0'));
+    head.appendChild(mk('b', 'font-size:13.5px;', title + ' v8.2.0'));
     const minBtn = mk('button',
       'background:none;border:0;color:#fff;font-size:22px;' +
       'min-width:32px;min-height:32px;cursor:pointer;padding:0;line-height:1;', '−');
@@ -2541,14 +2541,16 @@
         const list = await trpc('student.listForSchool', { schoolSlug: me.slug });
         if (!Array.isArray(list)) throw new Error('bad-list');
         const exKeys = new Set(((exist && exist.keys) || []).filter(k => k && k.length >= 5));
+        const exNames = ((exist && exist.names) || []).filter(n => n && n.length >= 8);
         const items = [], seen = new Set();
         let reviewed = 0, existing = 0;
         for (const rec of list) {
+          if (!rec || typeof rec !== 'object') continue;
           const d = recordToData(rec, me.name);
           if (d.reviewed) { reviewed++; continue; }
           // (v7.9.1) الاسم الرباعي فقط: الاسم + الأب + الجد + جد الأب
           const k = norm(d.name) + norm(d.father) + norm(d.grandfather) + norm(d.greatGrandfather);
-          if (d.greatGrandfather && exKeys.has(k)) { existing++; continue; }
+          if (d.greatGrandfather && (exKeys.has(k) || exNames.some(n => n.startsWith(k)))) { existing++; continue; }
           if (seen.has(k)) continue;
           seen.add(k);
           items.push({ k, d });
@@ -2582,6 +2584,73 @@
         markByKey(k);
       }
     }
+    /* ---------- (v8.2) مقارنة موقع الطلاب مع EMIS + تحديد «تمت المراجعة» دفعة واحدة ---------- */
+    const K_CMP = 'emis_compare_v1', K_MARKMANY = 'emis_markmany_v1';
+    async function compareApi(exist) {
+      const res = o => gmSet(K_CMP, JSON.stringify({ ...o, t: Date.now() }));
+      try {
+        const me = await trpc('school.me');
+        if (!me || !me.slug) throw new Error('سجّل دخول المنسق في موقع الطلاب');
+        const list = await trpc('student.listForSchool', { schoolSlug: me.slug });
+        if (!Array.isArray(list)) throw new Error('لم تصل قائمة الطلاب');
+        const names = ((exist && exist.names) || []).filter(n => n && n.length >= 8);
+        const keys = new Set((exist && exist.keys) || []);
+        const items = [];
+        for (const rec of list) {
+          if (!rec || typeof rec !== 'object') continue;
+          const d = recordToData(rec, me.name);
+          const k3 = norm(d.name) + norm(d.father) + norm(d.grandfather);
+          const k4 = k3 + norm(d.greatGrandfather);
+          const inEmis = !!d.greatGrandfather && (keys.has(k4) || names.some(n => n.startsWith(k4)));
+          items.push({
+            id: rec.id, k: k4,
+            name: [d.name, d.father, d.grandfather, d.greatGrandfather, d.surname !== d.greatGrandfather ? d.surname : ''].filter(Boolean).join(' '),
+            grade: d.grade || '', section: d.section || '',
+            reviewed: !!d.reviewed, inEmis,
+            maybe: !inEmis && k3.length >= 6 && names.some(n => n.startsWith(k3)),   // تطابق ثلاثي فقط (للتنبيه)
+            noGgf: !d.greatGrandfather,
+            d: inEmis ? null : d,
+          });
+        }
+        res({ ok: true, school: me.name, total: list.length, items });
+      } catch (e) { res({ ok: false, error: (e && e.message) || String(e) }); }
+    }
+    async function markManyApi(ids) {
+      const prog = o => gmSet(K_MARKMANY, JSON.stringify({ ...o, t: Date.now() }));
+      stopRequested = false;
+      let done = 0, ok = 0, already = 0;
+      const failed = [];
+      try {
+        const me = await trpc('school.me');
+        const list = await trpc('student.listForSchool', { schoolSlug: me.slug });
+        const byId = new Map((list || []).filter(Boolean).map(r => [r.id, r]));
+        prog({ running: true, done, total: ids.length, ok, already, failed: 0 });
+        for (const id of ids) {
+          checkStop();
+          done++;
+          const rec = byId.get(id);
+          if (!rec) { failed.push(id); continue; }
+          let t = {};
+          try { t = JSON.parse(rec.details || '{}'); } catch { /* ignore */ }
+          if (REVIEWED_VALUES.includes(String(t.reviewed ?? '').trim().toLowerCase())) { already++; continue; }
+          try {
+            await trpc('student.updateAdmin', {
+              schoolId: rec.schoolId ?? me.id, id: rec.id, fullName: rec.fullName, grade: rec.grade, section: rec.section,
+              details: JSON.stringify({ ...t, reviewed: 'true' }),
+            }, true);
+            ok++;
+          } catch (e) { if (e && e.isStop) throw e; failed.push(id); }
+          if (done % 2 === 0 || done === ids.length) prog({ running: true, done, total: ids.length, ok, already, failed: failed.length });
+          await sleep(40);
+        }
+        prog({ running: false, done, total: ids.length, ok, already, failed: failed.length, failedIds: failed });
+      } catch (e) {
+        prog({ running: false, done, total: ids.length, ok, already, failed: failed.length, error: e && e.isStop ? 'أُوقف' : (e && e.message) || String(e) });
+      }
+    }
+    window.__emisCompare = exist => { compareApi(exist); };
+    window.__emisMarkMany = ids => { markManyApi(ids || []); };
+
     window.__emisSync = (known, exist) => { syncApi(known, exist); };
     window.__emisMark = (k, id) => { if (id) markApi(k, id); else markByKey(k); };
 
@@ -2822,7 +2891,7 @@
         if (!rowsNow().length) { prog({ done: true, error: 'افتح «إدارة الطلاب» (قائمة الطلاب) في EMIS' }); return; }
         const tm = digits(document.body.innerText || '').match(/(\d+)\s*\n?\s*عدد الطلاب/) || digits(document.body.innerText || '').match(/عدد الطلاب\s*\n?\s*(\d+)/);
         const total = tm ? +tm[1] : 0;
-        const keys = new Set(), ids = new Set(), seenRows = new Set();
+        const keys = new Set(), ids = new Set(), names = new Set(), seenRows = new Set();
         const rowKey = r => clean(r.innerText || r.textContent || '');
         const collect = () => {
           for (const r of rowsNow()) {
@@ -2832,6 +2901,7 @@
             for (const c of r.querySelectorAll('td')) {
               const tk = clean(c.innerText || c.textContent || '').split(/\s+/).filter(w => /^[\u0621-\u064A]+$/.test(w));
               if (tk.length >= 4) keys.add(norm(tk[0]) + norm(tk[1]) + norm(tk[2]) + norm(tk[3]));   // (v7.9.1) الاسم الرباعي فقط
+              if (tk.length >= 3) names.add(norm(tk.join('')));
             }
           }
         };
@@ -2885,7 +2955,7 @@
           if (!moved) break;
           collect(); report();
         }
-        prog({ done: true, keys: [...keys], ids: [...ids], rows: seenRows.size, total });
+        prog({ done: true, keys: [...keys], ids: [...ids], names: [...names], rows: seenRows.size, total });
       } catch (e) {
         prog({ done: true, error: e && e.isStop ? 'أُوقفت القراءة' : 'خطأ: ' + (e && e.message ? e.message : e) });
       } finally { listBusy = false; }
@@ -2930,7 +3000,7 @@
           throw new Error(last || 'network');
         };
         const sm = location.pathname.match(/schools\/(\d+)/) || location.pathname.match(/entities\/(\d+)/);
-        const keys = new Set(), ids = new Set();
+        const keys = new Set(), ids = new Set(), names = new Set();
         let rows = 0, total = 0;
         // (v8.0.1) كل طلاب المدرسة بطلب واحد (3000 في الصفحة) كما في التطبيق الأول
         const per = 3000;
@@ -2945,12 +3015,15 @@
             // (v7.9.1) المطابقة بالاسم الرباعي فقط
             const tk = clean(st.fullName || '').split(/\s+/).filter(w => /^[\u0621-\u064A]+$/.test(w));
             if (tk.length >= 4) keys.add(norm(tk[0]) + norm(tk[1]) + norm(tk[2]) + norm(tk[3]));
+            // (v8.2) الاسم الكامل بدون مسافات: يطابق الأسماء المركبة («عبد الله» = «عبدالله»)
+            const fullN = norm(clean(st.fullName || '').replace(/[^\u0621-\u064A\s]/g, ' '));
+            if (fullN.length >= 8) names.add(fullN);
           }
           prog({ done: false, rows, total });
           // نتوقف عند اكتمال العدد (حتى لو أعاد الخادم أقل من 3000 في الصفحة نكمل الصفحات)
           if (!data.length || (total ? rows >= total : data.length < per)) break;
         }
-        prog({ done: true, keys: [...keys], ids: [...ids], rows, total, api: true });
+        prog({ done: true, keys: [...keys], ids: [...ids], names: [...names], rows, total, api: true });
       } catch (e) {
         console.warn('[EMIS list api] fallback:', e && e.message);
         listEmisStudents();   // الطريقة القديمة (قراءة الجدول)

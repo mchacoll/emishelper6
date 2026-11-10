@@ -56,6 +56,7 @@ export function ControlPanel(props: {
   emisLog: string;
   siteLog: string;
   onSync: () => void;
+  onCompare: () => void;
   onRun: () => void;
   onStop: () => void;
   onDoneManual: () => void;
@@ -245,13 +246,14 @@ export function ControlPanel(props: {
       ) : (
         <View style={styles.row}>
           <Button kind="soft" icon="sync" label="مزامنة" onPress={props.onSync} compact style={{ flex: 1 }} />
+          <Button kind="soft" icon="scale-balance" label="مقارنة" onPress={props.onCompare} compact style={{ flex: 1 }} />
           <Button
             kind="gold"
             icon="play"
             label={pending ? `ابدأ (${pending})` : 'ابدأ'}
             onPress={props.onRun}
             compact
-            style={{ flex: 1.6 }}
+            style={{ flex: 1.3 }}
             disabled={!pending}
           />
         </View>
