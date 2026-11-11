@@ -52,6 +52,7 @@ const K_EXIST = 'emis_existing_v1';
 const K_GSTAT = 'emis_generic_status_v1';
 const K_CMP = 'emis_compare_v1';
 const K_MARKMANY = 'emis_markmany_v1';
+const K_SEND = 'emis_send_req_v1';
 const K_EXCEL_APP = 'app_excel_v1';
 const DESKTOP_WIDTH = 1280;
 // متصفح كمبيوتر: EMIS يفتح القوائم المنسدلة تحت الحقل بدل نافذة ملء الشاشة الخاصة بالهاتف
@@ -111,6 +112,7 @@ function Main() {
   const syncStep = useRef<'none' | 'emis' | 'site'>('none');
   const existingRef = useRef<{ keys: string[]; ids: string[]; names?: string[]; rows: number } | null>(null);
   const compareStep = useRef<'none' | 'emis' | 'site'>('none');
+  const singleSend = useRef(false); // إرسال طالب واحد من زر «إرسال إلى EMIS» في الموقع
   const [cmp, setCmp] = useState<CompareState>({ visible: false, step: 'done', text: '', percent: 0 });
   const syncWarn = useRef('');
   const pendingImport = useRef<(ExcelResult & { fileName: string }) | null>(null);
@@ -360,6 +362,58 @@ function Main() {
     setDetail(why);
     setSyncUI(u => ({ ...u, step: 'error', text: why, percent: 0, summary: undefined }));
     lastActivity.current = Date.now();
+  };
+
+  /* ===================== زر «إرسال إلى EMIS» في موقع الطلاب ===================== */
+  const onSendRequest = (raw: string) => {
+    let p: { id: number; k?: string; d?: QItem['d']; error?: string };
+    try {
+      p = JSON.parse(raw);
+    } catch {
+      return;
+    }
+    if (p.error || !p.d || !p.k) {
+      Alert.alert('إرسال إلى EMIS', p.error || 'تعذّرت قراءة الطالب');
+      return;
+    }
+    if (runningRef.current || syncingRef.current) {
+      toast('انتظر حتى ينتهي العمل الحالي');
+      return;
+    }
+    const d = p.d;
+    const k = p.k;
+    const nm = [d.name, d.father, d.grandfather, d.greatGrandfather].filter(Boolean).join(' ');
+    const go = () => {
+      setQueue(q => {
+        const rest = q.filter(i => i.k !== k);
+        return [{ k, d: { ...d, reviewed: false }, status: 'pending', note: 'من زر الموقع', t: Date.now() }, ...rest];
+      });
+      singleSend.current = true;
+      setRunning(true);
+      currentKey.current = k;
+      updateItem(k, { status: 'working', note: '' });
+      gmSet(K_DATA, JSON.stringify({ ...d, reviewed: false }), 'emis');
+      gmSet(K_STATUS, '', 'emis');
+      // نفس طريقة التطبيق الأول: تسجيل مباشر عبر خادم EMIS
+      gmSet(K_CMD, JSON.stringify({ mode: 'api', t: Date.now() }), 'emis');
+      setPhase('filling');
+      setDetail(`إرسال ${nm} إلى EMIS...`);
+      lastActivity.current = Date.now();
+    };
+    const warn = [
+      doneKeys.current.has(k) ? '⚠ هذا الطالب سُجّل سابقاً من التطبيق.' : '',
+      d.reviewed ? '⚠ عليه «تمت المراجعة» في موقعك.' : '',
+    ]
+      .filter(Boolean)
+      .join('\n');
+    Alert.alert(
+      'إرسال إلى EMIS',
+      `سيُضاف «${nm}» في EMIS الحقيقي مباشرة (${[d.grade, d.section].filter(Boolean).join(' / ')}).${warn ? '\n\n' + warn : ''}\n\nيجب أن تكون «إدارة الطلاب» مفتوحة في EMIS.`,
+      [
+        { text: 'إلغاء', style: 'cancel' },
+        { text: 'إرسال', onPress: go },
+      ],
+    );
   };
 
   /* ===================== المقارنة مع EMIS ===================== */
@@ -707,6 +761,7 @@ function Main() {
   };
 
   const stopQueue = (why?: string) => {
+    singleSend.current = false;
     setRunning(false);
     deactivateKeepAwake('queue').catch(() => {});
     if (why) setDetail(why);
@@ -750,7 +805,7 @@ function Main() {
     currentKey.current = null;
     setPhase('saved');
     setDetail('');
-    if (settingsRef.current.autoPilot && runningRef.current) {
+    if (settingsRef.current.autoPilot && runningRef.current && !singleSend.current) {
       // 🤖 الإضافة التلقائية: نكمل مباشرة
       setTimeout(nextStudent, 700);
       return;
@@ -969,6 +1024,11 @@ function Main() {
             } catch {
               /* ignore */
             }
+            return;
+          }
+          // طلب زر «إرسال إلى EMIS»: يتولاه التطبيق فقط (لا يُمرَّر لـ EMIS حتى لا يُسجَّل مرتين)
+          if (pane === 'site' && m.k === K_SEND) {
+            if (typeof v === 'string' && v) onSendRequest(v);
             return;
           }
           if (pane === 'site' && m.k === K_CMP) {

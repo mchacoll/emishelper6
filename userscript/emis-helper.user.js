@@ -1,7 +1,7 @@
 // ==UserScript==
-// @name         مساعد EMIS – تعبئة تلقائية (v8.2.0)
+// @name         مساعد EMIS – تعبئة تلقائية (v8.3.0)
 // @namespace    emis-helper
-// @version      8.2.0
+// @version      8.3.0
 // @description  تعبئة تلقائية لـ EMIS + حفظ + «تمت المراجعة» + فتح «جديد» + نقل «الاحتياجات الخاصة» من EMIS إلى موقعك
 // @match        *://*/*
 // @grant        GM_setValue
@@ -315,7 +315,7 @@
     ui.dir = 'rtl';
 
     const head = mk('div', 'display:flex;justify-content:space-between;align-items:center;gap:8px');
-    head.appendChild(mk('b', 'font-size:13.5px;', title + ' v8.2.0'));
+    head.appendChild(mk('b', 'font-size:13.5px;', title + ' v8.3.0'));
     const minBtn = mk('button',
       'background:none;border:0;color:#fff;font-size:22px;' +
       'min-width:32px;min-height:32px;cursor:pointer;padding:0;line-height:1;', '−');
@@ -2649,6 +2649,44 @@
       }
     }
     window.__emisCompare = exist => { compareApi(exist); };
+
+    /* ---------- (v8.3) زر «إرسال إلى EMIS» في موقع الطلاب ----------
+       الزر في الموقع علامة فقط (data-action="send-to-emis")، والمساعد هو من يقرأ الطالب
+       ويطلب تسجيله مباشرة في EMIS (التطبيق، أو تبويب EMIS على الحاسبة) */
+    const K_SEND = 'emis_send_req_v1', K_SEND_RES = 'emis_send_res_v1';
+    document.addEventListener('click', async ev => {
+      const btn = ev.target && ev.target.closest && ev.target.closest('[data-action="send-to-emis"]');
+      if (!btn || inUI(btn)) return;
+      ev.preventDefault();
+      ev.stopPropagation();
+      if (btn.dataset.emisBusy === '1') return;
+      btn.dataset.emisBusy = '1';
+      const id = Number(btn.getAttribute('data-student-id'));
+      try {
+        let me = null;
+        try { me = await trpc('school.me'); } catch { /* ignore */ }
+        const slug = btn.getAttribute('data-school-slug') || (me && me.slug) || '';
+        if (!slug) throw new Error('سجّل دخول المنسق في موقع الطلاب');
+        const list = await trpc('student.listForSchool', { schoolSlug: slug });
+        const rec = (list || []).find(r => r && r.id === id);
+        if (!rec) throw new Error('لم أجد الطالب في قائمة المدرسة');
+        const d = recordToData(rec, me && me.name);
+        const k = norm(d.name) + norm(d.father) + norm(d.grandfather) + norm(d.greatGrandfather);
+        gmSet(K_SEND, JSON.stringify({ id, k, d, t: Date.now() }));
+      } catch (e) {
+        gmSet(K_SEND, JSON.stringify({ id, error: (e && e.message) || String(e), t: Date.now() }));
+        if (!window.ReactNativeWebView) alert('إرسال إلى EMIS: ' + ((e && e.message) || e));
+      } finally {
+        setTimeout(() => { btn.dataset.emisBusy = ''; }, 1500);
+      }
+    }, true);
+    // على الحاسبة: نتيجة EMIS ← تحديد «تمت المراجعة» عند النجاح
+    onChange(K_SEND_RES, nv => {
+      if (!nv) return;
+      let r; try { r = JSON.parse(nv); } catch { return; }
+      if (r.saved && r.id) markApi(r.k, r.id);
+      if (bar) bar.setLog(r.saved ? '✅ أُرسل إلى EMIS: ' + (r.name || '') : '✖ لم يُرسل: ' + ((r.miss && r.miss[0]) || ''));
+    });
     window.__emisMarkMany = ids => { markManyApi(ids || []); };
 
     window.__emisSync = (known, exist) => { syncApi(known, exist); };
@@ -3238,6 +3276,23 @@
       log('✅ أُضيف الطالب في EMIS مباشرة');
       return { ok: 1, saved: true, miss: [], api: true };
     }
+
+    // (v8.3) على الحاسبة (Tampermonkey): طلب «إرسال إلى EMIS» من تبويب موقع الطلاب
+    //        (داخل التطبيق لا يصل هذا الطلب إلى هنا؛ التطبيق يتولاه ويطلب التأكيد)
+    onChange('emis_send_req_v1', nv => {
+      if (!nv || window.ReactNativeWebView) return;
+      let p; try { p = JSON.parse(nv); } catch { return; }
+      if (!p || p.error || !p.d) return;
+      const nm = [p.d.name, p.d.father, p.d.grandfather, p.d.greatGrandfather].filter(Boolean).join(' ');
+      if (!confirm('إرسال «' + nm + '» إلى EMIS الحقيقي مباشرة؟')) return;
+      guarded(api, async () => {
+        api.setLog('');
+        let r;
+        try { r = await registerApi(p.d, api.addLog); }
+        catch (e) { if (e && e.isStop) throw e; r = { ok: 0, saved: false, miss: ['خطأ: ' + (e && e.message ? e.message : e)] }; }
+        gmSet('emis_send_res_v1', JSON.stringify({ ...r, id: p.id, k: p.k, name: nm, t: Date.now() }));
+      });
+    });
 
     onChange(K_CMD, cmdRaw => {
       if (!cmdRaw) return;
