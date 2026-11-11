@@ -1,7 +1,7 @@
 // ==UserScript==
-// @name         مساعد EMIS – تعبئة تلقائية (v8.3.0)
+// @name         مساعد EMIS – تعبئة تلقائية (v8.3.1)
 // @namespace    emis-helper
-// @version      8.3.0
+// @version      8.3.1
 // @description  تعبئة تلقائية لـ EMIS + حفظ + «تمت المراجعة» + فتح «جديد» + نقل «الاحتياجات الخاصة» من EMIS إلى موقعك
 // @match        *://*/*
 // @grant        GM_setValue
@@ -315,7 +315,7 @@
     ui.dir = 'rtl';
 
     const head = mk('div', 'display:flex;justify-content:space-between;align-items:center;gap:8px');
-    head.appendChild(mk('b', 'font-size:13.5px;', title + ' v8.3.0'));
+    head.appendChild(mk('b', 'font-size:13.5px;', title + ' v8.3.1'));
     const minBtn = mk('button',
       'background:none;border:0;color:#fff;font-size:22px;' +
       'min-width:32px;min-height:32px;cursor:pointer;padding:0;line-height:1;', '−');
@@ -3266,7 +3266,7 @@
         schoolId, stageId, classRoomId, ageExceptionReason: null, genderExceptionReason: null,
         address: {
           addressType: 1, countryStructureId: placeId, town: DEFAULTS.city, area: S(d.neighborhood), quarter: S(d.mahalla), street: S(d.alley),
-          apartmentNumber: '', buildingNumber: '', address1: '0', address2: '0', closestLocation: S(d.landmark) || '0',
+          apartmentNumber: '', buildingNumber: '', address1: '', address2: '', closestLocation: S(d.landmark) || '0',   // (v8.3.1) العنوان 1 و 2 فارغان بدل «0»
           latitude: 0, longitude: 0, schoolPhoneNumber: '', mobilePhoneNumber: '', email: '', website: '',
         },
       };
