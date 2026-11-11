@@ -1,7 +1,7 @@
 // ==UserScript==
-// @name         مساعد EMIS – تعبئة تلقائية (v8.3.1)
+// @name         مساعد EMIS – تعبئة تلقائية (v8.3.2)
 // @namespace    emis-helper
-// @version      8.3.1
+// @version      8.3.2
 // @description  تعبئة تلقائية لـ EMIS + حفظ + «تمت المراجعة» + فتح «جديد» + نقل «الاحتياجات الخاصة» من EMIS إلى موقعك
 // @match        *://*/*
 // @grant        GM_setValue
@@ -315,7 +315,7 @@
     ui.dir = 'rtl';
 
     const head = mk('div', 'display:flex;justify-content:space-between;align-items:center;gap:8px');
-    head.appendChild(mk('b', 'font-size:13.5px;', title + ' v8.3.1'));
+    head.appendChild(mk('b', 'font-size:13.5px;', title + ' v8.3.2'));
     const minBtn = mk('button',
       'background:none;border:0;color:#fff;font-size:22px;' +
       'min-width:32px;min-height:32px;cursor:pointer;padding:0;line-height:1;', '−');
@@ -1808,6 +1808,13 @@
     return hit || null;
   }
 
+  // (v8.3.2) الشعبة غير مكتوبة («غير محددة»، «لا يوجد»، «-»، «0»...) = بدون شعبة (ليست إلزامية)
+  function sectionValue(v) {
+    const s = clean(v).replace(/^(الشعبة|شعبة)\s*/, '').trim();
+    if (!s) return '';
+    if (/^(غيرمحدد|غيرمحدده|لايوجد|لاتوجد|بدون|بدونشعبه|لاشيء|null|undefined|-+|0+|٠+|\.+|\/+)$/.test(norm(s))) return '';
+    return s;
+  }
   const secNorm = x => norm((x || '').toString().normalize('NFKC')).replace(/[ھۀہ]/g, 'ه');
   function sectionCandidates(v, school) {
     const s = clean(v).replace(/^(الشعبة|شعبة)\s*/, '').trim();
@@ -1896,7 +1903,7 @@
       { l: ['مشمول بمنحة الرعاية الاجتماعية', 'مشمول بمنحة الرعاية', 'منحة الرعاية الاجتماعية'],
         v: welfareCandidates(d.welfare), kind: 'select' },
       { l: ['الصف الدراسي'], v: gradeCandidates(d.grade, d.school), kind: 'select', after: 450 },
-      { l: ['الشعبة'], v: sectionCandidates(d.section, d.school), kind: 'select', typeFallback: true, secRaw: d.section },
+      { l: ['الشعبة'], v: sectionCandidates(sectionValue(d.section), d.school), kind: 'select', typeFallback: true, secRaw: sectionValue(d.section) },
     ];
   }
 
@@ -3219,7 +3226,7 @@
       if (!stage) return fail('الصف «' + S(d.grade) + '» غير موجود في صفوف المدرسة في EMIS (' + stages.map(oTxt).slice(0, 8).join('، ') + ')');
       const stageId = parseInt(oVal(stage), 10);
       let classRoomId = null, roomTxt = '';
-      const sec = S(d.section).replace(/^(الشعبة|شعبة)\s*/, '');
+      const sec = sectionValue(d.section);   // (v8.3.2) فارغة أو «غير محددة» ← تُرسل بدون شعبة
       if (sec) {
         const rooms = await optList('/selectoption/getClassRooms?schoolId=' + schoolId + '&stageId=' + stageId);
         let k = secNorm(sec); if (/^[a-e]$/.test(k)) k = SECTION_ALT[k];
