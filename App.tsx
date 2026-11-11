@@ -801,6 +801,7 @@ function Main() {
     addDone(k);
     updateItem(k, { status: 'done', note });
     const it = queueRef.current.find(i => i.k === k);
+    toast(`✅ سُجّل ${nameOf(it)} في EMIS`);
     if (it?.d.__src !== 'excel') markOnSite(k, it?.d.__id);
     currentKey.current = null;
     setPhase('saved');
@@ -852,7 +853,8 @@ function Main() {
     setPhase(st.stopped ? 'stopped' : 'incomplete');
     setDetail(why + ' — أكمله في EMIS واحفظه ثم اضغط «حفظته ⏭»، أو «تخطي»');
     stopQueue();
-    toast('توقف التسجيل: ' + why);
+    if (settingsRef.current.showPanel) toast('توقف التسجيل: ' + why);
+    else Alert.alert('لم يُسجَّل في EMIS', why);
   };
 
   /* ---------- أزرار اللوحة ---------- */
@@ -1236,7 +1238,11 @@ function Main() {
         ) : null}
 
         {/* لوحة التحكم فوق الصفحة (لا تغيّر حجم الصفحة حتى لا تتحرك القوائم أثناء التعبئة) */}
-        <SafeAreaView edges={['bottom']} style={[styles.panelWrap, active === 'excel' && { display: 'none' }]} pointerEvents="box-none">
+        <SafeAreaView
+          edges={['bottom']}
+          style={[styles.panelWrap, (active === 'excel' || !settings.showPanel) && { display: 'none' }]}
+          pointerEvents="box-none"
+        >
           <ControlPanel
             current={current}
             phase={phase}

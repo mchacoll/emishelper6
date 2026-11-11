@@ -136,6 +136,13 @@ export function SettingsScreen(props: {
               onChange={v => set('split', v)}
             />
             <SettingRow
+              icon="dock-bottom"
+              title="إظهار لوحة التحكم السفلية"
+              subtitle="اللوحة التي فيها «مزامنة» و«مقارنة» و«ابدأ» واسم الطالب. زر «إرسال إلى EMIS» في موقع الطلاب يعمل وهي مخفية."
+              value={d.showPanel}
+              onChange={v => set('showPanel', v)}
+            />
+            <SettingRow
               icon="dock-window"
               title="إظهار الشريط الأزرق داخل الصفحات"
               subtitle="الشريط القديم للسكربت. لوحة التحكم في الأسفل تغني عنه."
