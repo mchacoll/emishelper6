@@ -1,7 +1,7 @@
 // ==UserScript==
-// @name         مساعد EMIS – تعبئة تلقائية (v8.4.0)
+// @name         مساعد EMIS – تعبئة تلقائية (v8.4.1)
 // @namespace    emis-helper
-// @version      8.4.0
+// @version      8.4.1
 // @description  تعبئة تلقائية لـ EMIS + حفظ + «تمت المراجعة» + فتح «جديد» + نقل «الاحتياجات الخاصة» من EMIS إلى موقعك
 // @match        *://*/*
 // @grant        GM_setValue
@@ -315,7 +315,7 @@
     ui.dir = 'rtl';
 
     const head = mk('div', 'display:flex;justify-content:space-between;align-items:center;gap:8px');
-    head.appendChild(mk('b', 'font-size:13.5px;', title + ' v8.4.0'));
+    head.appendChild(mk('b', 'font-size:13.5px;', title + ' v8.4.1'));
     const minBtn = mk('button',
       'background:none;border:0;color:#fff;font-size:22px;' +
       'min-width:32px;min-height:32px;cursor:pointer;padding:0;line-height:1;', '−');
@@ -517,6 +517,10 @@
       .matchAll(/(?:متوسطة|[اإ]عدادية|ثانوية|ابتدائية)[ \t]+[^\n—|·]{2,60}/g)].map(m => clean(m[0]));
     const sch = sms.find(t => /للبنين|للبنات/.test(t)) || sms[0];
     if (sch) data.school = sch;
+    // (v8.4.1) مدارس «حسب الاستمارة» اسمها يبدأ بـ«مدرسة» (مدرسة ابن بطوطة للبنات، مدرسة ميثم التمار الابتدائية)
+    const fsch = [...(document.body ? document.body.innerText : '').matchAll(/مدرسة[ \t]+[^\n—|·]{2,60}/g)]
+      .map(m => clean(m[0])).find(t => FORM_SCHOOLS.some(k => norm(t).includes(norm(k))));
+    if (fsch) data.school = fsch;
     // احتياط: قراءة «رقم الصحيفة» من نص الصفحة إن لم تُقرأ بالطريقة العادية
     if (isEmpty(data.civilSheet)) {
       const mm = (document.body ? document.body.innerText : '').match(/رقم\s*الصحيف[ةه]\s*[:：]?\s*\n?\s*([^\n:：]{1,25})/);
