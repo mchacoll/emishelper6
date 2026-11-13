@@ -1,0 +1,35 @@
+{
+  "expo": {
+    "name": "مساعد EMIS",
+    "slug": "emishelper",
+    "version": "8.4.1",
+    "orientation": "default",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "light",
+    "backgroundColor": "#0f3b57",
+    "splash": {
+      "image": "./assets/splash-icon.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#0F3B57"
+    },
+    "android": {
+      "package": "com.emishelper.app",
+      "versionCode": 841,
+      "adaptiveIcon": {
+        "backgroundColor": "#0F3B57",
+        "foregroundImage": "./assets/android-icon-foreground.png",
+        "backgroundImage": "./assets/android-icon-background.png",
+        "monochromeImage": "./assets/android-icon-monochrome.png"
+      },
+      "softwareKeyboardLayoutMode": "pan",
+      "predictiveBackGestureEnabled": false,
+      "permissions": [
+        "android.permission.REQUEST_INSTALL_PACKAGES"
+      ]
+    },
+    "ios": {
+      "bundleIdentifier": "com.emishelper.app",
+      "supportsTablet": true
+    }
+  }
+}

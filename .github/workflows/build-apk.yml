@@ -2,6 +2,12 @@ name: Build APK
 
 on:
   workflow_dispatch:
+  push:
+    branches: [main, 'claude/**']
+    paths-ignore: ['**.md']
+
+permissions:
+  contents: write # لنشر الإصدار (التحديث من داخل التطبيق)
 
 jobs:
   build:
@@ -10,17 +16,13 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Unzip project
-        run: unzip -o emishelper-android-source-v3.zip
-
-      - uses: pnpm/action-setup@v4
-        with:
-          version: 9
+      - name: Build number
+        run: echo "BUILD_NUMBER=$((1000 + GITHUB_RUN_NUMBER))" >> "$GITHUB_ENV"
 
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-          cache: pnpm
+          cache: npm
 
       - uses: actions/setup-java@v4
         with:
@@ -28,17 +30,55 @@ jobs:
           java-version: 17
 
       - name: Install dependencies
-        run: pnpm install --no-frozen-lockfile
+        run: npm ci
+
+      - name: Embed userscript + typecheck
+        run: |
+          npm run embed
+          npm run typecheck
 
       - name: Generate native Android project
         run: npx expo prebuild -p android --no-install
+        env:
+          EXPO_OFFLINE: '1'
 
       - name: Build release APK
         working-directory: android
-        run: ./gradlew assembleRelease --no-daemon
+        run: ./gradlew assembleRelease --no-daemon -PreactNativeArchitectures=armeabi-v7a,arm64-v8a
+
+      - name: Prepare release files
+        run: |
+          mkdir -p out
+          cp android/app/build/outputs/apk/release/app-release.apk out/emishelper.apk
+          cp userscript/emis-helper.user.js out/emis-helper.user.js
+          node -e '
+            const fs = require("fs");
+            const app = require("./app.json").expo;
+            const rel = JSON.parse(fs.readFileSync("release.json", "utf8"));
+            const sv = (fs.readFileSync("userscript/emis-helper.user.js", "utf8").match(/@version\s+([\d.]+)/) || [])[1];
+            const m = { version: app.version, versionCode: Number(process.env.BUILD_NUMBER), scriptVersion: sv,
+                        scriptMinBuild: rel.scriptMinBuild || 0, notes: rel.notes || [] };
+            fs.writeFileSync("out/version.json", JSON.stringify(m, null, 2));
+            fs.writeFileSync("out/notes.md", m.notes.map(n => "- " + n).join("\n") + "\n");
+            fs.appendFileSync(process.env.GITHUB_ENV, "APP_VERSION=" + app.version + "\n");
+            console.log(m);
+          '
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
           name: emishelper-apk
-          path: android/app/build/outputs/apk/release/*.apk
+          path: out/emishelper.apk
+
+      - name: Publish release (in-app update)
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ env.APP_VERSION }}-b${{ env.BUILD_NUMBER }}
+          name: مساعد EMIS v${{ env.APP_VERSION }} (بناء ${{ env.BUILD_NUMBER }})
+          target_commitish: ${{ github.sha }}
+          make_latest: 'true'
+          body_path: out/notes.md
+          files: |
+            out/emishelper.apk
+            out/version.json
+            out/emis-helper.user.js
