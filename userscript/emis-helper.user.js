@@ -1,7 +1,7 @@
 // ==UserScript==
-// @name         مساعد EMIS – تعبئة تلقائية (v8.3.2)
+// @name         مساعد EMIS – تعبئة تلقائية (v8.4.0)
 // @namespace    emis-helper
-// @version      8.3.2
+// @version      8.4.0
 // @description  تعبئة تلقائية لـ EMIS + حفظ + «تمت المراجعة» + فتح «جديد» + نقل «الاحتياجات الخاصة» من EMIS إلى موقعك
 // @match        *://*/*
 // @grant        GM_setValue
@@ -315,7 +315,7 @@
     ui.dir = 'rtl';
 
     const head = mk('div', 'display:flex;justify-content:space-between;align-items:center;gap:8px');
-    head.appendChild(mk('b', 'font-size:13.5px;', title + ' v8.3.2'));
+    head.appendChild(mk('b', 'font-size:13.5px;', title + ' v8.4.0'));
     const minBtn = mk('button',
       'background:none;border:0;color:#fff;font-size:22px;' +
       'min-width:32px;min-height:32px;cursor:pointer;padding:0;line-height:1;', '−');
@@ -458,6 +458,7 @@
     mahalla: ['المحلة', 'رقم المحلة'],
     alley: ['الزقاق', 'رقم الزقاق', 'زقاق'],
     landmark: ['أقرب نقطة دالة'],
+    governorate: ['المحافظة'], placeSite: ['المكان'], citySite: ['المدينة'], studyLang: ['لغة الدراسة'],
   };
   const ALL_LABELS = new Set(Object.values(SITE_LABELS).flat().map(norm));
   const NOISE = /^(نسخ|يحدد في EMIS|يُحدد في EMIS|تحدد في EMIS)/;
@@ -1808,6 +1809,18 @@
     return hit || null;
   }
 
+  /* ---- (v8.4) مدارس «حسب الاستمارة»: كل القيم من استمارة الطالب، بدون قيم ثابتة (خانقين...) ---- */
+  const FORM_SCHOOLS = ['ابن بطوطة', 'ميثم التمار', 'مثيم التمار'];
+  const formDriven = d => { const sn = norm(d && d.school); return !!sn && FORM_SCHOOLS.some(k => sn.includes(norm(k))); };
+  // المكان والمدينة ولغة الدراسة لهذا الطالب
+  function placeOf(d) {
+    if (!formDriven(d)) return { text: DEFAULTS.place, chain: DEFAULTS.placeChain, city: DEFAULTS.city, gov: DEFAULTS.placeChain[1], fixed: true };
+    const text = clean(d.placeSite), gov = clean(d.governorate);
+    return { text, chain: ['العراق', gov, text].filter(Boolean), city: clean(d.citySite), gov, fixed: false };
+  }
+  const studyLangOf = d => (formDriven(d) ? (langCandidates(d.studyLang) || null) : [DEFAULTS.studyLanguage]);
+  const religionOf = d => (formDriven(d) && isEmpty(d.religion) ? null : religionCandidates(d.religion));
+
   // (v8.3.2) الشعبة غير مكتوبة («غير محددة»، «لا يوجد»، «-»، «0»...) = بدون شعبة (ليست إلزامية)
   function sectionValue(v) {
     const s = clean(v).replace(/^(الشعبة|شعبة)\s*/, '').trim();
@@ -1821,7 +1834,9 @@
     if (!s) return null;
     const n = secNorm(s);
     const ar = /^[a-e]$/.test(n) ? SECTION_ALT[n] : n;
-    const pos = (!school || norm(school).includes('ازادي') || !/للبنات|للبنين|اسوار|مزده/.test(norm(school))) ? SECTION_POSITION[ar] : undefined;
+    // (v8.4) مدارس «حسب الاستمارة»: الشعبة بالحرف فقط، بدون ترتيب ثابت
+    const pos = FORM_SCHOOLS.some(k => norm(school).includes(norm(k))) ? undefined
+      : ((!school || norm(school).includes('ازادي') || !/للبنات|للبنين|اسوار|مزده/.test(norm(school))) ? SECTION_POSITION[ar] : undefined);
     const ok = new Set([n, ar]);
     if (SECTION_ALT[n]) ok.add(SECTION_ALT[n]);
     return [{
@@ -1888,7 +1903,7 @@
       // (v7.6) الجنسية: يكتب «العراق» ثم ينتظر ظهورها ويضغط عليها (احتياط: «العراقية»)
       { l: ['الجنسية'], v: ['العراق', 'العراقية'], kind: 'select', typeSearch: true },
       { l: ['اللغة الأم'], v: langCandidates(d.motherTongue), kind: 'select' },
-      { l: ['الديانة'], v: religionCandidates(d.religion), kind: 'select' },
+      { l: ['الديانة'], v: religionOf(d), kind: 'select' },
       { l: ['فئة الدم'], v: bloodCandidates(d.blood), kind: 'select' },
       { l: ['رقم الهاتف', 'الهاتف'], v: d.phone, kind: 'text' },
     ];
@@ -1897,7 +1912,7 @@
   // الصفحة 2 — قبل المكان
   function buildPlanPage2A(d) {
     return [
-      { l: ['لغة الدراسة'], v: [DEFAULTS.studyLanguage], kind: 'select' },
+      { l: ['لغة الدراسة'], v: studyLangOf(d), kind: 'select' },
       // (v7.8) المستوى المعيشي حسب استمارة المعلومات (يضغط على الخيار، وإن فشل يكتبه ثم يضغط عليه)
       { l: ['المستوى المعيشي'], v: livingValue(d.living), kind: 'select', living: true, emptyNote: 'فارغ في استمارة المعلومات، لم أختر شيئاً' },
       { l: ['مشمول بمنحة الرعاية الاجتماعية', 'مشمول بمنحة الرعاية', 'منحة الرعاية الاجتماعية'],
@@ -1910,7 +1925,7 @@
   // الصفحة 2 — بعد المكان
   function buildPlanPage2B(d) {
     return [
-      { l: ['المدينة/القرية', 'المدينة / القرية', 'المدينة'], v: DEFAULTS.city },
+      { l: ['المدينة/القرية', 'المدينة / القرية', 'المدينة'], v: placeOf(d).city },
       { l: ['الحي', 'الحي / المنطقة'], v: d.neighborhood },
       { l: ['المحلة', 'رقم المحلة'], v: d.mahalla },
       { l: ['الزقاق', 'زقاق', 'رقم الزقاق'], v: d.alley },
@@ -2191,7 +2206,9 @@
     log('📄 الصفحة 2...');
     const a = await runPlan(buildPlanPage2A(data), log);
     log('📍 المكان...');
-    const loc = await fillPlace(DEFAULTS.place, DEFAULTS.placeChain, log);
+    const pl = placeOf(data);
+    const loc = pl.text ? await fillPlace(pl.text, pl.chain, log)
+      : (log('✖ المكان فارغ في الاستمارة'), { ok: 0, miss: ['المكان'] });
     await sleep(600);
     const b = await runPlan(buildPlanPage2B(data), log);
     await sleep(600);
@@ -2530,6 +2547,7 @@
         gender: S(r.gender), motherTongue: S(r.motherTongue), blood: S(r.bloodType), religion: S(r.religion), phone: S(r.phone),
         special: S(r.specialNeedsType), living: S(r.livingStandard), welfare: S(r.socialCareIncluded),
         grade: S(r.grade), section: S(r.branch), neighborhood: S(r.neighborhood), mahalla: S(r.district), alley: S(r.alley),
+        governorate: S(r.place), placeSite: S(r.location), citySite: S(r.city), studyLang: S(r.studyLanguage),
         landmark: S(r.nearestLandmark), school: schoolName || '', reviewed: REVIEWED_VALUES.includes(S(r.reviewed).toLowerCase()),
         __id: rec.id, __schoolId: rec.schoolId,
       };
@@ -3211,8 +3229,14 @@
       if (!mtC) return fail('اللغة الأم فارغة في الاستمارة');
       const mt = optPick(langs, mtC);
       if (!mt) return fail('اللغة الأم غير موجودة في EMIS: ' + S(d.motherTongue));
-      const sl = optPick(langs, [DEFAULTS.studyLanguage, 'عربي']);
-      const rel = optPick(religions, religionCandidates(d.religion));
+      const pl = placeOf(d);
+      const slC = studyLangOf(d);
+      if (!slC) return fail('لغة الدراسة فارغة في الاستمارة');
+      const sl = optPick(langs, pl.fixed ? [DEFAULTS.studyLanguage, 'عربي'] : slC);
+      if (!sl && !pl.fixed) return fail('لغة الدراسة غير موجودة في EMIS: ' + S(d.studyLang));
+      const relC = religionOf(d);
+      if (!relC) return fail('الديانة فارغة في الاستمارة');
+      const rel = optPick(religions, relC);
       if (!rel) return fail('الديانة غير موجودة في EMIS: ' + S(d.religion));
       const bC = bloodCandidates(d.blood);
       const blood = bC ? optPick(bloods, bC) : null;
@@ -3238,13 +3262,26 @@
       let nodes = unwrap(apiCache.tree || (apiCache.tree = await emisApi('/CountryStructure/getcountrystructure')));
       nodes = Array.isArray(nodes) ? nodes : [];
       let placeId = null, depth = 0;
-      for (const name of DEFAULTS.placeChain) {
-        const want = norm(name);
-        const hit = nodes.find(x => norm(oTxt(x)) === want) || nodes.find(x => norm(oTxt(x)).includes(want));
-        if (!hit) break;
-        placeId = parseInt(oVal(hit), 10); depth++; nodes = kids(hit);
+      if (pl.fixed) {
+        for (const name of DEFAULTS.placeChain) {
+          const want = norm(name);
+          const hit = nodes.find(x => norm(oTxt(x)) === want) || nodes.find(x => norm(oTxt(x)).includes(want));
+          if (!hit) break;
+          placeId = parseInt(oVal(hit), 10); depth++; nodes = kids(hit);
+        }
+        if (!placeId || depth < 3) return fail('لم أجد المكان «' + DEFAULTS.placeChain.slice(0, 3).join(' / ') + '» في EMIS');
+      } else {
+        // (v8.4) المكان من الاستمارة: نبحث عنه بالاسم داخل المحافظة (أو داخل العراق كله)
+        if (!pl.text) return fail('المكان فارغ في الاستمارة');
+        const iraqN = nodes.find(x => norm(oTxt(x)).includes(norm('العراق'))) || nodes[0];
+        const govN = pl.gov && iraqN ? kids(iraqN).find(x => norm(oTxt(x)) === norm(pl.gov)) || kids(iraqN).find(x => norm(oTxt(x)).includes(norm(pl.gov))) : null;
+        const want = norm(pl.text);
+        const dfs = (list, exact) => { for (const x of list) { const t = norm(oTxt(x)); if (exact ? t === want : t.includes(want)) return x; const h = dfs(kids(x), exact); if (h) return h; } return null; };
+        const root = govN ? kids(govN) : (iraqN ? kids(iraqN) : nodes);
+        const hit = dfs(root, true) || dfs(root, false);
+        if (!hit) return fail('لم أجد المكان «' + [pl.gov, pl.text].filter(Boolean).join(' / ') + '» في EMIS');
+        placeId = parseInt(oVal(hit), 10);
       }
-      if (!placeId || depth < 3) return fail('لم أجد المكان «' + DEFAULTS.placeChain.slice(0, 3).join(' / ') + '» في EMIS');
       // الهوية
       const civil = isCivil(d);
       const digits = t => S(t).replace(/[\u0660-\u0669]/g, x => x.charCodeAt(0) - 0x660);
@@ -3272,7 +3309,7 @@
         isCoveredBySocialWelfare: yes(d.welfare), isDroppedOutFromSchool: false, lastYearResult: 3,
         schoolId, stageId, classRoomId, ageExceptionReason: null, genderExceptionReason: null,
         address: {
-          addressType: 1, countryStructureId: placeId, town: DEFAULTS.city, area: S(d.neighborhood), quarter: S(d.mahalla), street: S(d.alley),
+          addressType: 1, countryStructureId: placeId, town: pl.city, area: S(d.neighborhood), quarter: S(d.mahalla), street: S(d.alley),
           apartmentNumber: '', buildingNumber: '', address1: '', address2: '', closestLocation: S(d.landmark) || '0',   // (v8.3.1) العنوان 1 و 2 فارغان بدل «0»
           latitude: 0, longitude: 0, schoolPhoneNumber: '', mobilePhoneNumber: '', email: '', website: '',
         },
