@@ -11,7 +11,6 @@ export type ExcelData = {
   rows: string[][];
   status: Record<number, RowStatus>;
   selected: number;
-  studentRows: number; // صفوف فُهمت كطلاب (للإضافة إلى قائمة التسجيل)
 };
 
 /** شاشة Excel: رفع ملف، اختيار صف، وتعبئة النموذج المفتوح في EMIS */
@@ -21,7 +20,6 @@ export function ExcelScreen(props: {
   onPick: () => void;
   onSelect: (i: number) => void;
   onFill: (i: number) => void;
-  onAddStudents: () => void;
   onClear: () => void;
 }) {
   const d = props.data;
@@ -110,9 +108,6 @@ export function ExcelScreen(props: {
           <T bold style={{ fontSize: 15 }}>
             الصف {sel + 1} من {d.rows.length}
           </T>
-          {d.studentRows ? (
-            <Button kind="ghost" icon="account-multiple-plus" label={`إضافة كطلاب (${d.studentRows})`} onPress={props.onAddStudents} compact />
-          ) : null}
         </View>
         <View style={styles.chips}>
           {filledCols.slice(0, 12).map(x => (

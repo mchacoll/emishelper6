@@ -35,7 +35,6 @@ export function CompareScreen(props: {
   onClose: () => void;
   onRefresh: () => void;
   onMarkAll: (ids: number[]) => void;
-  onAddMissing: (items: CmpItem[]) => void;
   onCopy: (text: string) => void;
 }) {
   const { state } = props;
@@ -52,7 +51,6 @@ export function CompareScreen(props: {
       ok: items.filter(i => i.inEmis && i.reviewed),
     };
   }, [r]);
-  const missingToAdd = groups.missing.filter(i => !i.reviewed && i.d);
   const reviewedButMissing = groups.missing.filter(i => i.reviewed).length;
 
   const reportText = () => {
@@ -158,7 +156,7 @@ export function CompareScreen(props: {
                 data={list}
                 keyExtractor={i => String(i.id)}
                 style={{ flex: 1 }}
-                contentContainerStyle={{ paddingBottom: tab === 'missing' && missingToAdd.length ? 90 : 20 }}
+                contentContainerStyle={{ paddingBottom: 20 }}
                 ListEmptyComponent={<T style={{ textAlign: 'center', color: colors.muted, padding: 24 }}>لا يوجد</T>}
                 renderItem={({ item, index }) => (
                   <View style={styles.row}>
@@ -179,17 +177,6 @@ export function CompareScreen(props: {
                   </View>
                 )}
               />
-
-              {tab === 'missing' && missingToAdd.length ? (
-                <View style={styles.footer}>
-                  <Button
-                    kind="gold"
-                    icon="playlist-plus"
-                    label={`إضافة ${missingToAdd.length} غير مراجَع إلى قائمة التسجيل`}
-                    onPress={() => props.onAddMissing(missingToAdd)}
-                  />
-                </View>
-              ) : null}
             </>
           ) : null}
         </View>

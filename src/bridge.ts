@@ -147,11 +147,13 @@ const SHIM = String.raw`
 `;
 
 /** السكربت الذي يُحقن في كل صفحة (موقع الطلاب و EMIS) */
-export function buildInjection(siteHosts: string[], emisHosts: string[], hideBar: boolean, source?: string): string {
+export function buildInjection(siteHosts: string[], emisHosts: string[], hideBar: boolean, source?: string, schoolRules?: unknown[]): string {
   const hide = hideBar
     ? "window.__gmHideBar=true;(function(){try{var st=document.createElement('style');st.textContent='#emis-helper-ui{display:none!important}';(document.head||document.documentElement).appendChild(st);}catch(e){}})();\n"
     : '';
+  const rules = schoolRules && schoolRules.length ? 'window.__EMIS_SCHOOL_RULES=' + JSON.stringify(schoolRules) + ';\n' : '';
   return (
+    rules +
     hide +
     SHIM +
     '\nwindow.__gmBoot = function () {\n' +

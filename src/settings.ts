@@ -1,19 +1,31 @@
+/** قاعدة مدرسة: كيف تُملأ قيم المكان والمدينة ولغة الدراسة لطلابها */
+export type SchoolRule = {
+  key: string; // كلمة من اسم المدرسة ('' = باقي المدارس)
+  mode: 'fixed' | 'form'; // ثابت من هنا / حسب استمارة الطالب
+  gov?: string; // المحافظة
+  place?: string; // المكان
+  city?: string; // المدينة
+  lang?: string; // لغة الدراسة
+};
+
 export type Settings = {
   siteUrl: string;
   emisUrl: string;
   split: boolean; // عرض النافذتين معاً (أعلى/أسفل)
-  autoSwitch: boolean; // الانتقال تلقائياً إلى EMIS عند «تعبئة» ثم العودة بعد الحفظ
+  autoSwitch: boolean; // عرض EMIS تلقائياً أثناء التعبئة من Excel
   desktopEmis: boolean; // عرض EMIS بعرض شاشة الكمبيوتر
-  desktopUA: boolean; // تعريف EMIS بأننا متصفح كمبيوتر (القوائم تفتح تحت الحقل بدل نافذة)
-  autoFillNext: boolean; // بعد «تمت المراجعة»: فتح «جديد» في EMIS وتعبئته تلقائياً
+  desktopUA: boolean; // تعريف EMIS بأننا متصفح كمبيوتر
   showPageBar: boolean; // إظهار الشريط الأزرق داخل الصفحات (القديم)
-  showPanel: boolean; // إظهار لوحة التحكم السفلية (مزامنة / مقارنة / ابدأ)
-  directApi: boolean; // التسجيل المباشر عبر خادم EMIS (بدون ملء الاستمارة)
-  autoPilot: boolean; // الإضافة التلقائية: مراقبة موقع الطلاب وإدخال كل استمارة جديدة في EMIS
-  autoPilotMinutes: number; // كل كم دقيقة يُفحص موقع الطلاب
+  schools: SchoolRule[];
   onboarded: boolean;
   phoneV1: boolean; // (v8.5) انتقلنا لعرض EMIS بشكل الهاتف مرة واحدة
 };
+
+export const DEFAULT_SCHOOLS: SchoolRule[] = [
+  { key: 'ابن بطوطة', mode: 'form' },
+  { key: 'ميثم التمار', mode: 'form' },
+  { key: '', mode: 'fixed', gov: 'ديالى', place: 'مركز قضاء خانقين', city: 'خانقين', lang: 'العربية' },
+];
 
 export const DEFAULT_SETTINGS: Settings = {
   siteUrl: 'https://studentgate-kbbtktoc.manus.space',
@@ -22,15 +34,19 @@ export const DEFAULT_SETTINGS: Settings = {
   autoSwitch: true,
   desktopEmis: false,
   desktopUA: false,
-  autoFillNext: false,
   showPageBar: false,
-  showPanel: true,
-  directApi: false,
-  autoPilot: false,
-  autoPilotMinutes: 2,
+  schools: DEFAULT_SCHOOLS,
   onboarded: false,
   phoneV1: true,
 };
+
+/** القواعد كما تُرسل للسكربت: المدارس المسماة أولاً، ثم قاعدة «باقي المدارس» */
+export function normalizedSchools(list: SchoolRule[] | undefined): SchoolRule[] {
+  const src = Array.isArray(list) && list.length ? list : DEFAULT_SCHOOLS;
+  const named = src.filter(r => r && r.key && r.key.trim());
+  const def = src.find(r => r && !(r.key || '').trim()) || DEFAULT_SCHOOLS[DEFAULT_SCHOOLS.length - 1];
+  return [...named, { ...def, key: '' }];
+}
 
 export const normUrl = (u: string) => {
   const t = u.trim();

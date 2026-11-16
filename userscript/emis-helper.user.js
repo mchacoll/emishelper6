@@ -1,7 +1,7 @@
 // ==UserScript==
-// @name         مساعد EMIS – تعبئة تلقائية (v8.4.1)
+// @name         مساعد EMIS – تعبئة تلقائية (v8.6.0)
 // @namespace    emis-helper
-// @version      8.4.1
+// @version      8.6.0
 // @description  تعبئة تلقائية لـ EMIS + حفظ + «تمت المراجعة» + فتح «جديد» + نقل «الاحتياجات الخاصة» من EMIS إلى موقعك
 // @match        *://*/*
 // @grant        GM_setValue
@@ -315,7 +315,7 @@
     ui.dir = 'rtl';
 
     const head = mk('div', 'display:flex;justify-content:space-between;align-items:center;gap:8px');
-    head.appendChild(mk('b', 'font-size:13.5px;', title + ' v8.4.1'));
+    head.appendChild(mk('b', 'font-size:13.5px;', title + ' v8.6.0'));
     const minBtn = mk('button',
       'background:none;border:0;color:#fff;font-size:22px;' +
       'min-width:32px;min-height:32px;cursor:pointer;padding:0;line-height:1;', '−');
@@ -1813,17 +1813,67 @@
     return hit || null;
   }
 
-  /* ---- (v8.4) مدارس «حسب الاستمارة»: كل القيم من استمارة الطالب، بدون قيم ثابتة (خانقين...) ---- */
-  const FORM_SCHOOLS = ['ابن بطوطة', 'ميثم التمار', 'مثيم التمار'];
-  const formDriven = d => { const sn = norm(d && d.school); return !!sn && FORM_SCHOOLS.some(k => sn.includes(norm(k))); };
+  /* ---- (v8.6) قواعد المدارس: تأتي من إعدادات التطبيق (window.__EMIS_SCHOOL_RULES) أو القيم المدمجة ----
+     key: كلمة من اسم المدرسة ('' = باقي المدارس)، mode: 'fixed' قيم ثابتة / 'form' حسب استمارة الطالب */
+  const BUILTIN_RULES = [
+    { key: 'ابن بطوطة', mode: 'form' },
+    { key: 'ميثم التمار', mode: 'form' },
+    { key: 'مثيم التمار', mode: 'form' },
+    { key: '', mode: 'fixed', gov: DEFAULTS.placeChain[1], place: DEFAULTS.place, city: DEFAULTS.city, lang: DEFAULTS.studyLanguage },
+  ];
+  const SCHOOL_RULES = (Array.isArray(window.__EMIS_SCHOOL_RULES) && window.__EMIS_SCHOOL_RULES.length) ? window.__EMIS_SCHOOL_RULES : BUILTIN_RULES;
+  const DEFAULT_RULE = SCHOOL_RULES.find(r => !clean(r.key)) || BUILTIN_RULES[BUILTIN_RULES.length - 1];
+  function ruleFor(school) {
+    const sn = norm(school);
+    return (sn && SCHOOL_RULES.find(r => clean(r.key) && sn.includes(norm(r.key)))) || DEFAULT_RULE;
+  }
+  const FORM_SCHOOLS = SCHOOL_RULES.filter(r => clean(r.key)).map(r => r.key);   // أسماء المدارس المعرّفة (لاكتشاف الاسم في الصفحة)
+  const formDriven = d => ruleFor(d && d.school).mode === 'form';
   // المكان والمدينة ولغة الدراسة لهذا الطالب
   function placeOf(d) {
-    if (!formDriven(d)) return { text: DEFAULTS.place, chain: DEFAULTS.placeChain, city: DEFAULTS.city, gov: DEFAULTS.placeChain[1], fixed: true };
-    const text = clean(d.placeSite), gov = clean(d.governorate);
-    return { text, chain: ['العراق', gov, text].filter(Boolean), city: clean(d.citySite), gov, fixed: false };
+    const r = ruleFor(d && d.school);
+    if (r.mode === 'form') {
+      const text = clean(d.placeSite), gov = clean(d.governorate);
+      return { text, chain: ['العراق', gov, text].filter(Boolean), city: clean(d.citySite), gov, fixed: false };
+    }
+    const text = clean(r.place), gov = clean(r.gov);
+    const builtin = norm(text) === norm(DEFAULTS.place);
+    return { text, chain: builtin ? DEFAULTS.placeChain : ['العراق', gov, text].filter(Boolean), city: clean(r.city), gov, fixed: true, builtin };
   }
-  const studyLangOf = d => (formDriven(d) ? (langCandidates(d.studyLang) || null) : [DEFAULTS.studyLanguage]);
+  const studyLangOf = d => {
+    const r = ruleFor(d && d.school);
+    return r.mode === 'form' ? (langCandidates(d.studyLang) || null) : (langCandidates(r.lang || DEFAULTS.studyLanguage) || [DEFAULTS.studyLanguage]);
+  };
   const religionOf = d => (formDriven(d) && isEmpty(d.religion) ? null : religionCandidates(d.religion));
+
+  /* ---- (v8.6) فحص الاستمارة قبل الإرسال (بدون اتصال): ما قد يرفضه EMIS ---- */
+  function localIssues(d) {
+    const out = [];
+    const S = v => clean(String(v ?? ''));
+    const dg = t => S(t).replace(/[\u0660-\u0669]/g, x => x.charCodeAt(0) - 0x660).replace(/\D/g, '');
+    if (!S(d.name) || !S(d.father) || !S(d.grandfather)) out.push('الاسم الثلاثي ناقص');
+    if (!S(d.greatGrandfather)) out.push('اسم جد الأب فارغ');
+    if (!S(d.mother)) out.push('اسم الأم فارغ');
+    const iso = formatDate(S(d.dob), DATE_FORMAT, true);
+    const dm = iso.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+    if (!dm) out.push('تاريخ التولد ناقص');
+    else {
+      const age = new Date().getFullYear() - +dm[1];
+      if (age < 4 || age > 30 || +dm[2] < 1 || +dm[2] > 12 || +dm[3] < 1 || +dm[3] > 31) out.push('تاريخ التولد غير منطقي (' + iso + ')');
+    }
+    if (isCivil(d)) { if (!S(d.civilId)) out.push('رقم هوية الأحوال المدنية فارغ'); }
+    else if (dg(d.nationalId).length !== 12) out.push('رقم البطاقة ليس 12 رقماً');
+    if (!genderOf(d.gender)) out.push('الجنس فارغ');
+    if (!S(d.motherTongue)) out.push('اللغة الأم فارغة');
+    if (isEmpty(d.grade)) out.push('الصف فارغ');
+    const ph = dg(d.phone);
+    if (!ph) out.push('رقم الهاتف فارغ'); else if (!/^07\d{9}$/.test(ph)) out.push('رقم الهاتف غير صحيح');
+    if (formDriven(d)) {
+      if (!S(d.placeSite)) out.push('المكان فارغ');
+      if (isEmpty(d.religion)) out.push('الديانة فارغة');
+    }
+    return out;
+  }
 
   // (v8.3.2) الشعبة غير مكتوبة («غير محددة»، «لا يوجد»، «-»، «0»...) = بدون شعبة (ليست إلزامية)
   function sectionValue(v) {
@@ -1839,7 +1889,7 @@
     const n = secNorm(s);
     const ar = /^[a-e]$/.test(n) ? SECTION_ALT[n] : n;
     // (v8.4) مدارس «حسب الاستمارة»: الشعبة بالحرف فقط، بدون ترتيب ثابت
-    const pos = FORM_SCHOOLS.some(k => norm(school).includes(norm(k))) ? undefined
+    const pos = ruleFor(school).mode === 'form' ? undefined
       : ((!school || norm(school).includes('ازادي') || !/للبنات|للبنين|اسوار|مزده/.test(norm(school))) ? SECTION_POSITION[ar] : undefined);
     const ok = new Set([n, ar]);
     if (SECTION_ALT[n]) ok.add(SECTION_ALT[n]);
@@ -2701,7 +2751,7 @@
         if (!rec) throw new Error('لم أجد الطالب في قائمة المدرسة');
         const d = recordToData(rec, me && me.name);
         const k = norm(d.name) + norm(d.father) + norm(d.grandfather) + norm(d.greatGrandfather);
-        gmSet(K_SEND, JSON.stringify({ id, k, d, t: Date.now() }));
+        gmSet(K_SEND, JSON.stringify({ id, k, d, issues: localIssues(d), t: Date.now() }));
       } catch (e) {
         gmSet(K_SEND, JSON.stringify({ id, error: (e && e.message) || String(e), t: Date.now() }));
         if (!window.ReactNativeWebView) alert('إرسال إلى EMIS: ' + ((e && e.message) || e));
@@ -2709,6 +2759,39 @@
         setTimeout(() => { btn.dataset.emisBusy = ''; }, 1500);
       }
     }, true);
+    // (v8.6) علامة ⚠ على زر «إرسال إلى EMIS» للطالب الذي في استمارته نقص
+    //        (سمة على الزر نفسه + CSS، بدون إضافة عناصر داخل صفحة الموقع)
+    let issueMap = null, issueT = 0, issueBusy = false;
+    async function refreshIssues() {
+      const btns = document.querySelectorAll('[data-action="send-to-emis"]');
+      if (!btns.length || issueBusy) return;
+      if (!issueMap || Date.now() - issueT > 20000) {
+        issueBusy = true;
+        try {
+          const me = await trpc('school.me');
+          const list = await trpc('student.listForSchool', { schoolSlug: me.slug });
+          issueMap = new Map((list || []).filter(Boolean).map(rec => [rec.id, localIssues(recordToData(rec, me.name))]));
+          issueT = Date.now();
+        } catch { /* ignore */ }
+        issueBusy = false;
+      }
+      if (!issueMap) return;
+      if (!document.getElementById('emis-issue-style')) {
+        const st = document.createElement('style');
+        st.id = 'emis-issue-style';
+        st.textContent = '[data-action="send-to-emis"][data-emis-issues]::after{content:" ⚠" attr(data-emis-issues);color:#c0392b;font-weight:700;margin-inline-start:4px}';
+        (document.head || document.documentElement).appendChild(st);
+      }
+      for (const b of btns) {
+        const iss = issueMap.get(Number(b.getAttribute('data-student-id'))) || [];
+        const v = iss.length ? String(iss.length) : '';
+        if ((b.getAttribute('data-emis-issues') || '') === v) continue;
+        if (v) { b.setAttribute('data-emis-issues', v); b.title = iss.join('، '); }
+        else { b.removeAttribute('data-emis-issues'); b.title = ''; }
+      }
+    }
+    setInterval(() => { refreshIssues().catch(() => {}); }, 2500);
+
     // على الحاسبة: نتيجة EMIS ← تحديد «تمت المراجعة» عند النجاح
     onChange(K_SEND_RES, nv => {
       if (!nv) return;
@@ -3204,7 +3287,7 @@
     }
     const kids = n => { const r = n.children ?? n.items ?? n.subItems ?? n.childs; return Array.isArray(r) ? r : []; };
 
-    async function registerApi(d, log) {
+    async function registerApi(d, log, dry) {
       const fail = why => { log('✖ ' + why); return { ok: 0, saved: false, miss: [why], api: true }; };
       const sm = location.pathname.match(/schools\/(\d+)/);
       if (!sm) return fail('افتح «إدارة الطلاب» للمدرسة في EMIS أولاً');
@@ -3236,7 +3319,7 @@
       const pl = placeOf(d);
       const slC = studyLangOf(d);
       if (!slC) return fail('لغة الدراسة فارغة في الاستمارة');
-      const sl = optPick(langs, pl.fixed ? [DEFAULTS.studyLanguage, 'عربي'] : slC);
+      const sl = optPick(langs, pl.fixed ? slC.concat(['عربي']) : slC);
       if (!sl && !pl.fixed) return fail('لغة الدراسة غير موجودة في EMIS: ' + S(d.studyLang));
       const relC = religionOf(d);
       if (!relC) return fail('الديانة فارغة في الاستمارة');
@@ -3265,18 +3348,18 @@
       // المكان: العراق ← ديالى ← خانقين ← مركز قضاء خانقين
       let nodes = unwrap(apiCache.tree || (apiCache.tree = await emisApi('/CountryStructure/getcountrystructure')));
       nodes = Array.isArray(nodes) ? nodes : [];
-      let placeId = null, depth = 0;
-      if (pl.fixed) {
+      let placeId = null, depth = 0, placeName = '';
+      if (pl.builtin) {
         for (const name of DEFAULTS.placeChain) {
           const want = norm(name);
           const hit = nodes.find(x => norm(oTxt(x)) === want) || nodes.find(x => norm(oTxt(x)).includes(want));
           if (!hit) break;
-          placeId = parseInt(oVal(hit), 10); depth++; nodes = kids(hit);
+          placeId = parseInt(oVal(hit), 10); placeName = oTxt(hit); depth++; nodes = kids(hit);
         }
         if (!placeId || depth < 3) return fail('لم أجد المكان «' + DEFAULTS.placeChain.slice(0, 3).join(' / ') + '» في EMIS');
       } else {
-        // (v8.4) المكان من الاستمارة: نبحث عنه بالاسم داخل المحافظة (أو داخل العراق كله)
-        if (!pl.text) return fail('المكان فارغ في الاستمارة');
+        // المكان بالاسم (من الاستمارة أو من قاعدة المدرسة): نبحث عنه داخل المحافظة (أو داخل العراق كله)
+        if (!pl.text) return fail(pl.fixed ? 'المكان غير محدد في إعدادات المدرسة' : 'المكان فارغ في الاستمارة');
         const iraqN = nodes.find(x => norm(oTxt(x)).includes(norm('العراق'))) || nodes[0];
         const govN = pl.gov && iraqN ? kids(iraqN).find(x => norm(oTxt(x)) === norm(pl.gov)) || kids(iraqN).find(x => norm(oTxt(x)).includes(norm(pl.gov))) : null;
         const want = norm(pl.text);
@@ -3284,7 +3367,7 @@
         const root = govN ? kids(govN) : (iraqN ? kids(iraqN) : nodes);
         const hit = dfs(root, true) || dfs(root, false);
         if (!hit) return fail('لم أجد المكان «' + [pl.gov, pl.text].filter(Boolean).join(' / ') + '» في EMIS');
-        placeId = parseInt(oVal(hit), 10);
+        placeId = parseInt(oVal(hit), 10); placeName = oTxt(hit);
       }
       // الهوية
       const civil = isCivil(d);
@@ -3318,6 +3401,12 @@
           latitude: 0, longitude: 0, schoolPhoneNumber: '', mobilePhoneNumber: '', email: '', website: '',
         },
       };
+      // (v8.6) فحص فقط: كل شيء جاهز، لا نرسل
+      if (dry) {
+        log('✔ الفحص: جاهز للإرسال');
+        return { ok: 1, dry: true, saved: false, miss: [], api: true,
+          summary: { stage: oTxt(stage), room: roomTxt, place: placeName, city: pl.city, gender: gender === 2 ? 'أنثى' : 'ذكر', idNumber } };
+      }
       log(`📤 إرسال: ${payload.name} ${payload.fatherName} ${payload.grandFatherName} · ${oTxt(stage)}${roomTxt ? ' ' + roomTxt : ''} · ${gender === 2 ? 'أنثى' : 'ذكر'}`);
       try { await emisApi('/student/addstudent', payload); }
       catch (e) { return fail('رفض EMIS: ' + (e && e.message ? e.message : e)); }
@@ -3358,14 +3447,15 @@
         let r;
         // (v7.7.6) «ابدأ» من التطبيق: تعبئة الاستمارة المفتوحة مباشرة (بدون شرط «جديد»)
         //          مثلاً بعد «رقم البطاقة مستخدم مسبقاً» تكمل بطالب آخر على نفس الاستمارة
-        if (cmd.mode === 'api') {
-          try { r = await registerApi(data, api.addLog); }
+        if (cmd.mode === 'api' || cmd.mode === 'apiCheck') {
+          try { r = await registerApi(data, api.addLog, cmd.mode === 'apiCheck'); }
           catch (e) {
             if (e && e.isStop) throw e;
             const why = 'خطأ في التسجيل المباشر: ' + (e && e.message ? e.message : e);
             api.addLog('✖ ' + why);
             r = { ok: 0, saved: false, miss: [why], api: true };
           }
+          if (cmd.mode === 'apiCheck') r.dry = true;
         }
         else if (cmd.mode === 'fillNew') r = await fillBoth(data, api.addLog);
         else if (cmd.mode === 'page2') r = await fillPage2(data, api.addLog);
