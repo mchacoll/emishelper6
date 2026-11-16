@@ -12,6 +12,7 @@ export type Settings = {
   autoPilot: boolean; // الإضافة التلقائية: مراقبة موقع الطلاب وإدخال كل استمارة جديدة في EMIS
   autoPilotMinutes: number; // كل كم دقيقة يُفحص موقع الطلاب
   onboarded: boolean;
+  phoneV1: boolean; // (v8.5) انتقلنا لعرض EMIS بشكل الهاتف مرة واحدة
 };
 
 export const DEFAULT_SETTINGS: Settings = {
@@ -20,7 +21,7 @@ export const DEFAULT_SETTINGS: Settings = {
   split: false,
   autoSwitch: true,
   desktopEmis: false,
-  desktopUA: true,
+  desktopUA: false,
   autoFillNext: false,
   showPageBar: false,
   showPanel: true,
@@ -28,6 +29,7 @@ export const DEFAULT_SETTINGS: Settings = {
   autoPilot: false,
   autoPilotMinutes: 2,
   onboarded: false,
+  phoneV1: true,
 };
 
 export const normUrl = (u: string) => {

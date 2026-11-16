@@ -84,7 +84,7 @@ function Main() {
   });
   const [ready, setReady] = useState(false);
   const [settings, setSettings] = useState<Settings>(DEFAULT_SETTINGS);
-  const [active, setActive] = useState<Tab>('site');
+  const [active, setActive] = useState<Tab>('emis');
   const [showSettings, setShowSettings] = useState(false);
   const [showGuide, setShowGuide] = useState(false);
   const [errors, setErrors] = useState<LogLine[]>([]);
@@ -138,7 +138,7 @@ function Main() {
   const emisRef = useRef<WebView>(null);
   const views: Record<Pane, RefObject<WebView | null>> = { site: siteRef, emis: emisRef };
   const canBack = useRef<Record<Pane, boolean>>({ site: false, emis: false });
-  const activeRef = useRef<Tab>('site');
+  const activeRef = useRef<Tab>('emis');
   activeRef.current = active;
   const settingsRef = useRef(settings);
   settingsRef.current = settings;
@@ -170,7 +170,18 @@ function Main() {
           AsyncStorage.getItem(K_QUEUE_APP),
           AsyncStorage.getItem(K_DONE_APP),
         ]);
-        const loaded: Settings = s ? { ...DEFAULT_SETTINGS, ...JSON.parse(s) } : DEFAULT_SETTINGS;
+        const saved = s ? JSON.parse(s) : null;
+        const loaded: Settings = saved ? { ...DEFAULT_SETTINGS, ...saved } : DEFAULT_SETTINGS;
+        // (v8.5) حُذفت هذه الخيارات: الإضافة التلقائية واللوحة السفلية
+        loaded.autoPilot = false;
+        loaded.showPanel = false;
+        // مرة واحدة: EMIS يظهر بشكل الهاتف (وليس الحاسوب)
+        if (saved && !saved.phoneV1) {
+          loaded.desktopUA = false;
+          loaded.desktopEmis = false;
+          loaded.phoneV1 = true;
+          AsyncStorage.setItem(K_SETTINGS, JSON.stringify(loaded)).catch(() => {});
+        }
         setSettings(loaded);
         if (!loaded.onboarded) setShowGuide(true);
         if (st) store.current = JSON.parse(st) || {};
@@ -1284,6 +1295,10 @@ function Main() {
             .catch(() => toast('تعذّر النسخ'))
         }
         onShareLogs={() => Share.share({ message: buildLogText() }).catch(() => {})}
+        onCompare={() => {
+          setShowSettings(false);
+          startCompare();
+        }}
         onDiagnose={() => {
           setShowSettings(false);
           if (!settingsRef.current.split) setActive('emis');

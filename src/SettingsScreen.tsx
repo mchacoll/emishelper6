@@ -20,6 +20,7 @@ export function SettingsScreen(props: {
   onShareLogs: () => void;
   onShowGuide: () => void;
   onDiagnose: () => void;
+  onCompare: () => void;
   onCheckUpdate: () => void;
   versionText: string;
 }) {
@@ -41,71 +42,12 @@ export function SettingsScreen(props: {
           </T>
         </View>
         <ScrollView style={{ backgroundColor: colors.bg }} contentContainerStyle={{ padding: 16, gap: 8, paddingBottom: 40 }}>
-          <SectionTitle>الإضافة التلقائية</SectionTitle>
-          <Card>
-            <SettingRow
-              icon="robot-outline"
-              title="إضافة الاستمارات الجديدة إلى EMIS تلقائياً"
-              subtitle="كل فترة: مزامنة موقع الطلاب، ثم تسجيل كل استمارة جديدة (بدون «تمت المراجعة») في EMIS وحفظها. يعمل والتطبيق مفتوح وأنت مسجّل الدخول في الموقعين، ويتوقف عند أي حقل ناقص."
-              value={d.autoPilot}
-              onChange={v => {
-                if (!v) return set('autoPilot', false);
-                Alert.alert(
-                  'تفعيل الإضافة التلقائية',
-                  'سيُدخل التطبيق الطلاب في EMIS الحقيقي ويحفظهم بدون مراجعتك لكل طالب. تأكد أن التعبئة تعمل صحيحاً على طالب واحد أولاً.',
-                  [
-                    { text: 'إلغاء', style: 'cancel' },
-                    { text: 'تفعيل', onPress: () => set('autoPilot', true) },
-                  ],
-                );
-              }}
-              last={!d.autoPilot}
-            />
-            {d.autoPilot ? (
-              <View style={{ padding: 14, gap: 8 }}>
-                <T bold style={{ fontSize: 13 }}>
-                  الفحص كل
-                </T>
-                <View style={{ flexDirection: ROW, gap: 8 }}>
-                  {[1, 2, 5, 10].map(m => (
-                    <Pressable
-                      key={m}
-                      onPress={() => set('autoPilotMinutes', m)}
-                      style={[styles.chip, d.autoPilotMinutes === m && styles.chipOn]}
-                    >
-                      <T bold style={{ fontSize: 13, color: d.autoPilotMinutes === m ? '#fff' : colors.navy, textAlign: 'center' }}>
-                        {m === 1 ? 'دقيقة' : m === 2 ? 'دقيقتين' : `${m} دقائق`}
-                      </T>
-                    </Pressable>
-                  ))}
-                </View>
-              </View>
-            ) : null}
-          </Card>
-
           <SectionTitle>طريقة العمل</SectionTitle>
           <Card>
             <SettingRow
-              icon="lightning-bolt"
-              title="التسجيل المباشر (سريع)"
-              subtitle="يضيف الطالب في EMIS مباشرة خلال ثانية بدون ملء الاستمارة. لا ترى الاستمارة قبل الحفظ. إن رفض EMIS الطالب يظهر السبب ولا يُضاف."
-              value={d.directApi}
-              onChange={v => {
-                if (!v) return set('directApi', false);
-                Alert.alert(
-                  'التسجيل المباشر',
-                  'سيُضاف الطالب في EMIS الحقيقي مباشرة عند ضغط «ابدأ» دون عرض الاستمارة. جرّبه على طالب واحد أولاً وتأكد منه في قائمة EMIS.',
-                  [
-                    { text: 'إلغاء', style: 'cancel' },
-                    { text: 'تفعيل', onPress: () => set('directApi', true) },
-                  ],
-                );
-              }}
-            />
-            <SettingRow
               icon="swap-horizontal"
               title="التنقل التلقائي بين الشاشتين"
-              subtitle="عرض EMIS تلقائياً أثناء التسجيل."
+              subtitle="عرض EMIS تلقائياً أثناء التعبئة من Excel."
               value={d.autoSwitch}
               onChange={v => set('autoSwitch', v)}
               last
@@ -136,16 +78,9 @@ export function SettingsScreen(props: {
               onChange={v => set('split', v)}
             />
             <SettingRow
-              icon="dock-bottom"
-              title="إظهار لوحة التحكم السفلية"
-              subtitle="اللوحة التي فيها «مزامنة» و«مقارنة» و«ابدأ» واسم الطالب. زر «إرسال إلى EMIS» في موقع الطلاب يعمل وهي مخفية."
-              value={d.showPanel}
-              onChange={v => set('showPanel', v)}
-            />
-            <SettingRow
               icon="dock-window"
               title="إظهار الشريط الأزرق داخل الصفحات"
-              subtitle="الشريط القديم للسكربت. لوحة التحكم في الأسفل تغني عنه."
+              subtitle="شريط السكربت القديم داخل صفحة الموقع و EMIS."
               value={d.showPageBar}
               onChange={v => set('showPageBar', v)}
               last
@@ -159,6 +94,11 @@ export function SettingsScreen(props: {
           </Card>
 
           <Button kind="gold" icon="content-save" label="حفظ الإعدادات" onPress={save} style={{ marginTop: 8 }} />
+
+          <SectionTitle>أدوات</SectionTitle>
+          <Card style={{ padding: 14, gap: 10 }}>
+            <Button kind="soft" icon="scale-balance" label="مقارنة موقع الطلاب مع EMIS" onPress={props.onCompare} compact />
+          </Card>
 
           <SectionTitle>الدعم</SectionTitle>
           <Card style={{ padding: 14, gap: 10 }}>
