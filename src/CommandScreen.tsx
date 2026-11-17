@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { ActivityIndicator, FlatList, KeyboardAvoidingView, Modal, Pressable, StyleSheet, TextInput, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
-import { type AppActions, type ChatTurn, explainError, getApiKey, runCommand, setApiKey } from './agent';
+import { type AppActions, explainError, getApiKey, providerOf, runCommand, setApiKey } from './agent';
 import { colors, fonts, radius, ROW } from './theme';
 import { Button, Icon, IconButton, T } from './ui';
 
@@ -35,7 +35,7 @@ export function CommandScreen(props: { visible: boolean; onClose: () => void; ac
   const [lines, setLines] = useState<Line[]>([]);
   const [input, setInput] = useState('');
   const [busy, setBusy] = useState(false);
-  const history = useRef<ChatTurn[]>([]);
+  const history = useRef<unknown[]>([]);
   const list = useRef<FlatList<Line>>(null);
 
   useEffect(() => {
@@ -70,6 +70,10 @@ export function CommandScreen(props: { visible: boolean; onClose: () => void; ac
     const k = keyDraft.trim();
     if (!k) return;
     await setApiKey(k);
+    if (!key || providerOf(key) !== providerOf(k)) {
+      history.current = [];
+      setLines([]);
+    }
     setKey(k);
     setKeyDraft('');
     setEditKey(false);
@@ -81,7 +85,7 @@ export function CommandScreen(props: { visible: boolean; onClose: () => void; ac
         <View style={styles.head}>
           <IconButton icon="close" onPress={props.onClose} accessibilityLabel="إغلاق" />
           <T bold style={{ color: '#fff', fontSize: 17, flex: 1 }}>
-            مساعد الأوامر
+            مساعد الأوامر{unlocked && key ? (providerOf(key) === 'gemini' ? ' · Gemini' : ' · Claude') : ''}
           </T>
           {unlocked && key ? (
             <>
@@ -121,16 +125,17 @@ export function CommandScreen(props: { visible: boolean; onClose: () => void; ac
           ) : !key || editKey ? (
             <View style={styles.center}>
               <Icon name="key-variant" size={40} color={colors.navy} />
-              <T bold style={{ fontSize: 16, textAlign: 'center' }}>مفتاح Anthropic API</T>
+              <T bold style={{ fontSize: 16, textAlign: 'center' }}>مفتاح الذكاء الاصطناعي</T>
               <T style={{ fontSize: 12, color: colors.muted, textAlign: 'center', lineHeight: 20 }}>
-                أنشئ مفتاحاً من console.anthropic.com ← API Keys، ثم الصقه هنا.{'\n'}
-                يُحفظ مشفّراً في هذا الهاتف فقط. كل أمر يُحسب من رصيدك في Anthropic.
+                مجاني: Google Gemini — من aistudio.google.com ← Get API key (يبدأ بـ AIza).{'\n'}
+                مدفوع: Claude — من console.anthropic.com ← API Keys (يبدأ بـ sk-ant-).{'\n'}
+                يعرف التطبيق النوع من المفتاح نفسه، ويحفظه مشفّراً في هذا الهاتف فقط.
               </T>
               <TextInput
                 style={[styles.input, { alignSelf: 'stretch' }]}
                 value={keyDraft}
                 onChangeText={setKeyDraft}
-                placeholder="sk-ant-..."
+                placeholder="AIza... أو sk-ant-..."
                 placeholderTextColor={colors.muted}
                 autoCapitalize="none"
                 autoCorrect={false}

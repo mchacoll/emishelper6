@@ -38,100 +38,80 @@ const MODEL = 'claude-opus-5-5';
 
 export type ChatTurn = Anthropic.Beta.BetaMessageParam;
 
-function makeTools(a: AppActions) {
+type Spec = { name: string; description: string; props?: Record<string, { type: 'string' | 'integer'; enum?: string[]; description?: string }>; required?: string[]; run: (i: Record<string, unknown>) => Promise<string> };
+
+function makeSpecs(a: AppActions): Spec[] {
   return [
-    betaTool({
-      name: 'get_status',
-      description: 'حالة التطبيق الآن: التبويب المفتوح، عمليات اليوم (نجحت/فشلت)، آخر مقارنة، النسخة.',
-      inputSchema: { type: 'object', properties: {}, additionalProperties: false },
-      run: () => a.status(),
-    }),
-    betaTool({
+    { name: 'get_status', description: 'حالة التطبيق الآن: التبويب المفتوح، عمليات اليوم (نجحت/فشلت)، آخر مقارنة، النسخة.', run: () => a.status() },
+    {
       name: 'open_tab',
       description: 'فتح تبويب في التطبيق.',
-      inputSchema: {
-        type: 'object',
-        properties: { tab: { type: 'string', enum: ['site', 'excel', 'emis'], description: 'site = موقع الطلاب' } },
-        required: ['tab'],
-        additionalProperties: false,
-      },
-      run: ({ tab }) => a.openTab(tab),
-    }),
-    betaTool({
+      props: { tab: { type: 'string', enum: ['site', 'excel', 'emis'], description: 'site = موقع الطلاب' } },
+      required: ['tab'],
+      run: i => a.openTab(i.tab as 'site' | 'excel' | 'emis'),
+    },
+    {
       name: 'reload_page',
       description: 'إعادة تحميل صفحة موقع الطلاب أو صفحة EMIS.',
-      inputSchema: {
-        type: 'object',
-        properties: { pane: { type: 'string', enum: ['site', 'emis'] } },
-        required: ['pane'],
-        additionalProperties: false,
-      },
-      run: ({ pane }) => a.reload(pane),
-    }),
-    betaTool({
+      props: { pane: { type: 'string', enum: ['site', 'emis'] } },
+      required: ['pane'],
+      run: i => a.reload(i.pane as 'site' | 'emis'),
+    },
+    {
       name: 'compare_with_emis',
       description:
         'يقارن طلاب موقع الطلاب مع EMIS (بالاسم الرباعي) ويعيد: العدد، وقائمة غير الموجودين في EMIS مع id كل طالب، وعدد الموجودين بدون «تمت المراجعة». يحتاج «إدارة الطلاب» مفتوحة في EMIS. قد يستغرق دقيقة.',
-      inputSchema: { type: 'object', properties: {}, additionalProperties: false },
       run: () => a.compare(),
-    }),
-    betaTool({
-      name: 'show_compare_screen',
-      description: 'يعرض شاشة المقارنة للمستخدم (بعد compare_with_emis). يغلق نافذة المساعد.',
-      inputSchema: { type: 'object', properties: {}, additionalProperties: false },
-      run: () => a.showCompare(),
-    }),
-    betaTool({
+    },
+    { name: 'show_compare_screen', description: 'يعرض شاشة المقارنة للمستخدم (بعد compare_with_emis). يغلق نافذة المساعد.', run: () => a.showCompare() },
+    {
       name: 'send_student_to_emis',
-      description:
-        'يفتح نافذة المعاينة لإرسال طالب واحد إلى EMIS؛ المستخدم يراجع ويضغط «إرسال» بنفسه. id من نتيجة compare_with_emis. يغلق نافذة المساعد.',
-      inputSchema: {
-        type: 'object',
-        properties: { student_id: { type: 'integer' } },
-        required: ['student_id'],
-        additionalProperties: false,
-      },
-      run: ({ student_id }) => a.sendStudent(student_id),
-    }),
-    betaTool({
+      description: 'يفتح نافذة المعاينة لإرسال طالب واحد إلى EMIS؛ المستخدم يراجع ويضغط «إرسال» بنفسه. id من نتيجة compare_with_emis. يغلق نافذة المساعد.',
+      props: { student_id: { type: 'integer' } },
+      required: ['student_id'],
+      run: i => a.sendStudent(Number(i.student_id)),
+    },
+    {
       name: 'mark_reviewed_for_existing',
       description: 'يحدد «تمت المراجعة» في موقع الطلاب لكل طالب موجود في EMIS بدون مراجعة (بعد compare_with_emis). يطلب تأكيد المستخدم.',
-      inputSchema: { type: 'object', properties: {}, additionalProperties: false },
       run: () => a.markReviewed(),
-    }),
-    betaTool({
+    },
+    {
       name: 'search_operations',
       description: 'بحث في سجل عمليات الإرسال والتعديل (الاسم أو المدرسة). يعيد حتى 30 نتيجة مع الوقت والنتيجة والسبب.',
-      inputSchema: {
-        type: 'object',
-        properties: {
-          query: { type: 'string', description: 'جزء من الاسم أو المدرسة، أو فارغ للكل' },
-          result: { type: 'string', enum: ['all', 'ok', 'fail'] },
-        },
-        required: ['query', 'result'],
-        additionalProperties: false,
+      props: {
+        query: { type: 'string', description: 'جزء من الاسم أو المدرسة، أو فارغ للكل' },
+        result: { type: 'string', enum: ['all', 'ok', 'fail'] },
       },
-      run: ({ query, result }) => a.searchOps(query, result),
-    }),
-    betaTool({
-      name: 'export_operations_excel',
-      description: 'تصدير سجل العمليات إلى ملف Excel ومشاركته.',
-      inputSchema: { type: 'object', properties: {}, additionalProperties: false },
-      run: () => a.exportOps(),
-    }),
-    betaTool({
-      name: 'show_operations_log',
-      description: 'يفتح شاشة سجل العمليات. يغلق نافذة المساعد.',
-      inputSchema: { type: 'object', properties: {}, additionalProperties: false },
-      run: () => a.showOps(),
-    }),
-    betaTool({
-      name: 'check_for_updates',
-      description: 'يفحص وجود تحديث للتطبيق.',
-      inputSchema: { type: 'object', properties: {}, additionalProperties: false },
-      run: () => a.checkUpdates(),
-    }),
+      required: ['query', 'result'],
+      run: i => a.searchOps(String(i.query ?? ''), (i.result as 'all' | 'ok' | 'fail') || 'all'),
+    },
+    { name: 'export_operations_excel', description: 'تصدير سجل العمليات إلى ملف Excel ومشاركته.', run: () => a.exportOps() },
+    { name: 'show_operations_log', description: 'يفتح شاشة سجل العمليات. يغلق نافذة المساعد.', run: () => a.showOps() },
+    { name: 'check_for_updates', description: 'يفحص وجود تحديث للتطبيق.', run: () => a.checkUpdates() },
   ];
+}
+
+const safeRun = async (sp: Spec, input: Record<string, unknown>, onTool: (n: string) => void) => {
+  onTool(sp.name);
+  try {
+    return await sp.run(input || {});
+  } catch (e) {
+    return 'خطأ: ' + ((e as Error)?.message || String(e));
+  }
+};
+
+function claudeTools(specs: Spec[], onTool: (n: string) => void) {
+  return specs.map(sp =>
+    betaTool({
+      name: sp.name,
+      description: sp.description,
+      inputSchema: { type: 'object', properties: (sp.props || {}) as Record<string, never>, required: sp.required || [], additionalProperties: false } as {
+        type: 'object';
+      },
+      run: (input: unknown) => safeRun(sp, input as Record<string, unknown>, onTool),
+    }),
+  );
 }
 
 const textOf = (m: Anthropic.Beta.BetaMessage) =>
@@ -141,26 +121,21 @@ const textOf = (m: Anthropic.Beta.BetaMessage) =>
     .join('\n')
     .trim();
 
-/** يرسل الأمر ويشغّل الأدوات حتى ينتهي، ويعيد الرد والمحادثة الجديدة */
+export type Provider = 'claude' | 'gemini';
+export const providerOf = (key: string): Provider => (key.trim().startsWith('AIza') ? 'gemini' : 'claude');
+
+/** يرسل الأمر ويشغّل الأدوات حتى ينتهي، ويعيد الرد والمحادثة الجديدة (Claude أو Gemini حسب نوع المفتاح) */
 export async function runCommand(
   apiKey: string,
-  history: ChatTurn[],
+  history: unknown[],
   command: string,
   actions: AppActions,
   onTool: (name: string) => void,
-): Promise<{ reply: string; history: ChatTurn[] }> {
+): Promise<{ reply: string; history: unknown[] }> {
+  const specs = makeSpecs(actions);
+  if (providerOf(apiKey) === 'gemini') return runGemini(apiKey, history, command, specs, onTool);
+
   const client = new Anthropic({ apiKey, maxRetries: 2, timeout: 120_000 });
-  const tools = makeTools(actions).map(t => ({
-    ...t,
-    run: async (input: never) => {
-      onTool(t.name);
-      try {
-        return await (t.run as (i: never) => Promise<string>)(input);
-      } catch (e) {
-        return 'خطأ: ' + ((e as Error)?.message || String(e));
-      }
-    },
-  }));
   const runner = client.beta.messages.toolRunner({
     model: MODEL,
     max_tokens: 16000,
@@ -168,9 +143,9 @@ export async function runCommand(
     fallbacks: 'default',
     output_config: { effort: 'low' },
     system: SYSTEM,
-    tools,
+    tools: claudeTools(specs, onTool),
     max_iterations: 12,
-    messages: [...history, { role: 'user', content: command }],
+    messages: [...(history as ChatTurn[]), { role: 'user', content: command }],
   });
   const final = await runner.runUntilDone();
   const msgs = [...runner.params.messages];
@@ -182,8 +157,81 @@ export async function runCommand(
   return { reply: reply || 'تم.', history: msgs.slice(-40) };
 }
 
+/* ---------- Google Gemini (مجاني ضمن حدود يومية) ---------- */
+const GEMINI_MODEL = 'gemini-flash-latest';
+type GPart = { text?: string; thought?: boolean; functionCall?: { name: string; args?: Record<string, unknown> }; functionResponse?: unknown };
+type GContent = { role: 'user' | 'model'; parts: GPart[] };
+
+export class GeminiError extends Error {
+  constructor(public status: number, message: string) {
+    super(message);
+  }
+}
+
+const gSchema = (sp: Spec) =>
+  sp.props
+    ? {
+        type: 'OBJECT',
+        properties: Object.fromEntries(
+          Object.entries(sp.props).map(([k, v]) => [k, { type: v.type.toUpperCase(), ...(v.enum ? { enum: v.enum } : {}), ...(v.description ? { description: v.description } : {}) }]),
+        ),
+        required: sp.required || [],
+      }
+    : undefined;
+
+async function runGemini(key: string, history: unknown[], command: string, specs: Spec[], onTool: (n: string) => void) {
+  const contents: GContent[] = [...(history as GContent[]), { role: 'user', parts: [{ text: command }] }];
+  const tools = [{ functionDeclarations: specs.map(sp => ({ name: sp.name, description: sp.description, ...(sp.props ? { parameters: gSchema(sp) } : {}) })) }];
+  for (let step = 0; step < 12; step++) {
+    const ctl = new AbortController();
+    const timer = setTimeout(() => ctl.abort(), 90_000);
+    let res: Response;
+    try {
+      res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-goog-api-key': key.trim() },
+        body: JSON.stringify({ systemInstruction: { parts: [{ text: SYSTEM }] }, contents, tools }),
+        signal: ctl.signal,
+      });
+    } catch {
+      throw new GeminiError(0, 'network');
+    } finally {
+      clearTimeout(timer);
+    }
+    const j = await res.json().catch(() => null);
+    if (!res.ok) throw new GeminiError(res.status, (j && j.error && j.error.message) || 'HTTP ' + res.status);
+    const cand = j && j.candidates && j.candidates[0];
+    const content: GContent | undefined = cand && cand.content;
+    if (!content || !Array.isArray(content.parts)) {
+      const why = (j && j.promptFeedback && j.promptFeedback.blockReason) || (cand && cand.finishReason) || 'رد فارغ';
+      return { reply: 'لم يُنفَّذ الأمر (' + why + ').', history: contents.slice(-40) };
+    }
+    contents.push({ role: 'model', parts: content.parts });
+    const calls = content.parts.filter(p => p.functionCall);
+    if (!calls.length) {
+      const reply = content.parts.filter(p => p.text && !p.thought).map(p => p.text).join('\n').trim();
+      return { reply: reply || 'تم.', history: contents.slice(-40) };
+    }
+    const out: GPart[] = [];
+    for (const c of calls) {
+      const sp = specs.find(x => x.name === c.functionCall!.name);
+      const result = sp ? await safeRun(sp, c.functionCall!.args || {}, onTool) : 'أداة غير معروفة';
+      out.push({ functionResponse: { name: c.functionCall!.name, response: { result } } });
+    }
+    contents.push({ role: 'user', parts: out });
+  }
+  return { reply: 'توقفت بعد خطوات كثيرة — جرّب أمراً أبسط.', history: contents.slice(-40) };
+}
+
 /** رسالة خطأ مفهومة */
 export function explainError(e: unknown): string {
+  if (e instanceof GeminiError) {
+    if (e.status === 0) return 'لا يوجد اتصال بالإنترنت.';
+    if (e.status === 429) return 'انتهى الحد المجاني المسموح الآن من Google — انتظر دقيقة، أو حتى الغد إن كان الحد اليومي.';
+    if (e.status === 400 && /API key/i.test(e.message)) return 'مفتاح Gemini غير صحيح — غيّره من زر المفتاح.';
+    if (e.status === 403) return 'المفتاح لا يملك صلاحية، أو الخدمة غير متاحة في بلدك.';
+    return `خطأ من Google (${e.status}): ${e.message}`;
+  }
   if (e instanceof Anthropic.AuthenticationError) return 'مفتاح API غير صحيح — غيّره من زر المفتاح.';
   if (e instanceof Anthropic.PermissionDeniedError) return 'المفتاح لا يملك صلاحية لهذا النموذج.';
   if (e instanceof Anthropic.RateLimitError) return 'طلبات كثيرة أو رصيد غير كافٍ — حاول بعد قليل.';
