@@ -1,7 +1,7 @@
 // ==UserScript==
-// @name         مساعد EMIS – تعبئة تلقائية (v8.10.0)
+// @name         مساعد EMIS – تعبئة تلقائية (v8.12.0)
 // @namespace    emis-helper
-// @version      8.10.0
+// @version      8.12.0
 // @description  تعبئة تلقائية لـ EMIS + حفظ + «تمت المراجعة» + فتح «جديد» + نقل «الاحتياجات الخاصة» من EMIS إلى موقعك
 // @match        *://*/*
 // @grant        GM_setValue
@@ -316,7 +316,7 @@
     ui.dir = 'rtl';
 
     const head = mk('div', 'display:flex;justify-content:space-between;align-items:center;gap:8px');
-    head.appendChild(mk('b', 'font-size:13.5px;', title + ' v8.10.0'));
+    head.appendChild(mk('b', 'font-size:13.5px;', title + ' v8.12.0'));
     const minBtn = mk('button',
       'background:none;border:0;color:#fff;font-size:22px;' +
       'min-width:32px;min-height:32px;cursor:pointer;padding:0;line-height:1;', '−');
@@ -2768,11 +2768,16 @@
       ev.stopPropagation();
       if (btn.dataset.emisBusy === '1') return;
       btn.dataset.emisBusy = '1';
-      const id = Number(btn.getAttribute('data-student-id'));
+      try { await sendById(Number(btn.getAttribute('data-student-id')), btn.getAttribute('data-school-slug')); }
+      finally { setTimeout(() => { btn.dataset.emisBusy = ''; }, 1500); }
+    }, true);
+    // (v8.12) نفس طلب الزر لكن برقم الطالب (من «مساعد الأوامر» في التطبيق)
+    window.__emisSendId = id => { sendById(Number(id), ''); return true; };
+    async function sendById(id, slugAttr) {
       try {
         let me = null;
         try { me = await trpc('school.me'); } catch { /* ignore */ }
-        const slug = btn.getAttribute('data-school-slug') || (me && me.slug) || '';
+        const slug = slugAttr || (me && me.slug) || '';
         if (!slug) throw new Error('سجّل دخول المنسق في موقع الطلاب');
         const list = await trpc('student.listForSchool', { schoolSlug: slug });
         const rec = (list || []).find(r => r && r.id === id);
@@ -2783,10 +2788,8 @@
       } catch (e) {
         gmSet(K_SEND, JSON.stringify({ id, error: (e && e.message) || String(e), t: Date.now() }));
         if (!window.ReactNativeWebView) alert('إرسال إلى EMIS: ' + ((e && e.message) || e));
-      } finally {
-        setTimeout(() => { btn.dataset.emisBusy = ''; }, 1500);
       }
-    }, true);
+    }
     // (v8.6) علامة ⚠ على زر «إرسال إلى EMIS» للطالب الذي في استمارته نقص
     //        (سمة على الزر نفسه + CSS، بدون إضافة عناصر داخل صفحة الموقع)
     let issueMap = null, issueT = 0, issueBusy = false;
