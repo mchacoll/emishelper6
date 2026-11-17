@@ -2,7 +2,7 @@
   "expo": {
     "name": "ميسّر التسجيل",
     "slug": "emishelper",
-    "version": "8.8.0",
+    "version": "8.9.0",
     "orientation": "default",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "light",
@@ -14,7 +14,7 @@
     },
     "android": {
       "package": "com.emishelper.app",
-      "versionCode": 880,
+      "versionCode": 890,
       "adaptiveIcon": {
         "backgroundColor": "#0F3B57",
         "foregroundImage": "./assets/android-icon-foreground.png",

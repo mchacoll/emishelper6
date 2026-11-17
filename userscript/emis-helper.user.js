@@ -1,7 +1,7 @@
 // ==UserScript==
-// @name         مساعد EMIS – تعبئة تلقائية (v8.8.0)
+// @name         مساعد EMIS – تعبئة تلقائية (v8.9.0)
 // @namespace    emis-helper
-// @version      8.8.0
+// @version      8.9.0
 // @description  تعبئة تلقائية لـ EMIS + حفظ + «تمت المراجعة» + فتح «جديد» + نقل «الاحتياجات الخاصة» من EMIS إلى موقعك
 // @match        *://*/*
 // @grant        GM_setValue
@@ -316,7 +316,7 @@
     ui.dir = 'rtl';
 
     const head = mk('div', 'display:flex;justify-content:space-between;align-items:center;gap:8px');
-    head.appendChild(mk('b', 'font-size:13.5px;', title + ' v8.8.0'));
+    head.appendChild(mk('b', 'font-size:13.5px;', title + ' v8.9.0'));
     const minBtn = mk('button',
       'background:none;border:0;color:#fff;font-size:22px;' +
       'min-width:32px;min-height:32px;cursor:pointer;padding:0;line-height:1;', '−');
@@ -1848,6 +1848,31 @@
   const religionOf = d => (formDriven(d) && isEmpty(d.religion) ? null : religionCandidates(d.religion));
 
   /* ---- (v8.6) فحص الاستمارة قبل الإرسال (بدون اتصال): ما قد يرفضه EMIS ---- */
+  /* (v8.9) مطابقة العمر مع الصف
+     القبول في الأول الابتدائي بعمر 6 سنوات مكتملة في 31/12 من سنة بدء العام الدراسي،
+     فالعمر المتوقع = 5 + رقم الصف (المتوسط +6، الإعدادي +6). ننبّه إن كان أصغر،
+     أو أكبر بأكثر من 3 سنوات (رسوب متكرر أو خطأ في التاريخ/الصف) */
+  function ageGradeIssue(y, m, dd, grade, school) {
+    if (isEmpty(grade)) return '';
+    let n = gradeOrdinal(grade);
+    if (!n) return '';
+    const g = gnorm(grade), sc = gnorm(school || '');
+    if (g.includes('متوسط')) n += 6;
+    else if (g.includes('اعداد') || GRADE_BRANCH.some(b => g.includes(b))) n += 6;
+    else if (g.includes('ثانو')) return '';
+    else if (/متوسط|اعداد|ثانو/.test(sc) && !sc.includes('ابتد')) return '';   // مرحلة غير معروفة
+    if (n > 12) return '';
+    const now = new Date();
+    const sy = now.getMonth() >= 7 ? now.getFullYear() : now.getFullYear() - 1;   // بداية العام الدراسي
+    let age = sy - y;
+    if (m > 12 || dd > 31) return '';
+    // العمر في 31/12 من سنة بداية العام الدراسي (المولود في السنة نفسها يكمل سنته فيها)
+    const exp = 5 + n;
+    if (age < exp) return 'العمر صغير على الصف: ' + age + ' سنة في 31/12/' + sy + ' — المتوقع ' + exp + ' أو أكثر';
+    if (age > exp + 3) return 'العمر كبير على الصف: ' + age + ' سنة — المتوقع ' + exp + ' إلى ' + (exp + 3) + ' (تحقق من التاريخ أو الصف)';
+    return '';
+  }
+
   function localIssues(d) {
     const out = [];
     const S = v => clean(String(v ?? ''));
@@ -1862,6 +1887,8 @@
       const age = new Date().getFullYear() - +dm[1];
       if (age < 4 || age > 30 || +dm[2] < 1 || +dm[2] > 12 || +dm[3] < 1 || +dm[3] > 31) out.push('تاريخ التولد غير منطقي (' + iso + ')');
     }
+    const ag = dm ? ageGradeIssue(+dm[1], +dm[2], +dm[3], d.grade, d.school) : '';
+    if (ag) out.push(ag);
     if (isCivil(d)) { if (!S(d.civilId)) out.push('رقم هوية الأحوال المدنية فارغ'); }
     else if (dg(d.nationalId).length !== 12) out.push('رقم البطاقة ليس 12 رقماً');
     if (!genderOf(d.gender)) out.push('الجنس فارغ');

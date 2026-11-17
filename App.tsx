@@ -454,6 +454,10 @@ function Main() {
       exists.length ? `موجود في EMIS (يُتخطّى ويُحدَّد عليه «تمت المراجعة»): ${exists.length}` : '',
       fails.length ? `فيه نقص (يُتخطّى): ${fails.length}` : '',
       ...fails.slice(0, 12),
+      ...(() => {
+        const ages = ready.flatMap(i => (i.issues || []).filter(x => x.startsWith('العمر')).map(x => `⚠ ${fullName(i.d)}: ${x}`));
+        return ages.length ? ['', `تنبيه العمر والصف (${ages.length}) — يُرسَلون، تحقق منهم:`, ...ages.slice(0, 10)] : [];
+      })(),
     ]
       .filter(Boolean)
       .join('\n');
