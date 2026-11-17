@@ -6,7 +6,7 @@ import { useFonts } from 'expo-font';
 import * as Sharing from 'expo-sharing';
 import { StatusBar } from 'expo-status-bar';
 import { type RefObject, useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { ActivityIndicator, Alert, BackHandler, Pressable, Share, StyleSheet, ToastAndroid, View } from 'react-native';
+import { ActivityIndicator, Alert, AppState, BackHandler, Pressable, Share, StyleSheet, ToastAndroid, View } from 'react-native';
 import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
 import WebView, { type WebViewMessageEvent, type WebViewNavigation } from 'react-native-webview';
 
@@ -212,15 +212,17 @@ function Main() {
   /* ---------- التحديث ---------- */
   const scriptRef = useRef(script);
   scriptRef.current = script;
-  const checkUpdates = async (manual: boolean) => {
+  const lastCheck = useRef(0);
+  const checkUpdates = async (manual: boolean): Promise<boolean> => {
     const m = await fetchManifest();
     if (!m) {
       if (manual) toast('تعذّر التحقق من التحديث (تحقق من الإنترنت)');
-      return;
+      return false;
     }
+    lastCheck.current = Date.now();
     if (m.versionCode > installedBuild()) {
       setUpdate(m);
-      return;
+      return true;
     }
     const ns = await updateScript(m, scriptRef.current?.version || '0');
     if (ns) {
@@ -229,15 +231,31 @@ function Main() {
         { text: 'لاحقاً', style: 'cancel' },
         { text: 'إعادة التحميل', onPress: () => setReloadKey(k => ({ site: k.site + 1, emis: k.emis + 1 })) },
       ]);
-      return;
+      return true;
     }
     if (manual) toast('لديك آخر إصدار');
+    return true;
   };
+  // فحص التحديث تلقائياً: عند التشغيل (مع إعادة المحاولة إن لم يكن الإنترنت جاهزاً)،
+  // وكلما عاد التطبيق للواجهة من الخلفية (مرة كل 10 دقائق على الأكثر)
+  const checkUpdatesRef = useRef(checkUpdates);
+  checkUpdatesRef.current = checkUpdates;
   useEffect(() => {
     if (!ready) return;
-    const t = setTimeout(() => checkUpdates(false), 4000);
-    return () => clearTimeout(t);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    const timers: ReturnType<typeof setTimeout>[] = [];
+    const attempt = (i: number) => {
+      checkUpdatesRef.current(false).then(ok => {
+        if (!ok && i < 3) timers.push(setTimeout(() => attempt(i + 1), [15000, 45000, 120000][i]));
+      });
+    };
+    timers.push(setTimeout(() => attempt(0), 3000));
+    const sub = AppState.addEventListener('change', st => {
+      if (st === 'active' && Date.now() - lastCheck.current > 10 * 60 * 1000) checkUpdatesRef.current(false);
+    });
+    return () => {
+      timers.forEach(clearTimeout);
+      sub.remove();
+    };
   }, [ready]);
 
   const addError = useCallback((pane: Pane, level: string, msg: string) => {
