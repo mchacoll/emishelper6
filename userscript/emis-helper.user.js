@@ -1,7 +1,7 @@
 // ==UserScript==
-// @name         مساعد EMIS – تعبئة تلقائية (v8.13.0)
+// @name         مساعد EMIS – تعبئة تلقائية (v8.14.0)
 // @namespace    emis-helper
-// @version      8.13.0
+// @version      8.14.0
 // @description  تعبئة تلقائية لـ EMIS + حفظ + «تمت المراجعة» + فتح «جديد» + نقل «الاحتياجات الخاصة» من EMIS إلى موقعك
 // @match        *://*/*
 // @grant        GM_setValue
@@ -316,7 +316,7 @@
     ui.dir = 'rtl';
 
     const head = mk('div', 'display:flex;justify-content:space-between;align-items:center;gap:8px');
-    head.appendChild(mk('b', 'font-size:13.5px;', title + ' v8.13.0'));
+    head.appendChild(mk('b', 'font-size:13.5px;', title + ' v8.14.0'));
     const minBtn = mk('button',
       'background:none;border:0;color:#fff;font-size:22px;' +
       'min-width:32px;min-height:32px;cursor:pointer;padding:0;line-height:1;', '−');
@@ -2865,7 +2865,7 @@
           if (!hit) continue;
           snap = now;
           const d = recordToData(hit[1], now.me.name), od = recordToData(hit[0], now.me.name);
-          gmSet(K_UPD, JSON.stringify({ id: hit[1].id, k: keyOf(d), oldK: keyOf(od), d, t: Date.now() }));
+          gmSet(K_UPD, JSON.stringify({ id: hit[1].id, k: keyOf(d), oldK: keyOf(od), d, od, t: Date.now() }));
           return;
         }
       })();
@@ -3519,37 +3519,54 @@
 
     /* (v8.7) تعديل طالب موجود في EMIS (بعد «حفظ التعديل» في موقع الطلاب)
        نبحث عنه بالاسم الرباعي (القديم أو الجديد)، نقرأ سجله كاملاً، نغيّر حقول الاستمارة فقط ونحفظ */
-    async function updateApi(d, keys, log) {
+    /* (v8.14) تعديل طالب موجود في EMIS — مطابقة صارمة
+       كانت المطابقة بأول الاسم فقط، فقد تختار طالباً آخر يبدأ اسمه بنفس الحروف
+       (مثلاً «حسن» و«حسنين»، أو اسم مركب، أو استمارة بلا جد الأب) وتكتب فوقه.
+       الآن: جد الأب إلزامي، ونقرأ سجل كل مرشح ونقارن الاسم والأب والجد وجد الأب حقلاً حقلاً
+       (مع الاسم القديم أو الجديد). dry = فحص فقط يعيد الطالب المطابق والتغييرات ليؤكد المستخدم. */
+    async function updateApi(d, od, log, opt) {
+      opt = opt || {};
       const fail = why => { log('✖ ' + why); return { ok: 0, saved: false, upd: true, miss: [why] }; };
+      const skip = why => { log('ℹ️ ' + why); return { ok: 0, saved: false, upd: true, skip: true, why, miss: [] }; };
       const sm = location.pathname.match(/schools\/(\d+)/);
       if (!sm) return fail('افتح «إدارة الطلاب» للمدرسة في EMIS أولاً');
-      const want = new Set((keys || []).filter(Boolean));
-      log('🔎 البحث عن الطالب في EMIS...');
-      const exact = [], loose = [];
-      for (let page = 1; page <= 20; page++) {
-        const q = new URLSearchParams({ page: String(page), rowsPerPage: '3000', sortBy: 'id', sortOrder: 'desc', entityId: sm[1] });
-        const j = await emisApi('/student/getstudents?' + q);
-        const data = (j && j.data) || [];
-        for (const st of data) {
-          const tk = clean(st.fullName || '').split(/\s+/).map(norm).filter(w => /^[\u0621-\u064A\u0671-\u06D5]+$/.test(w));
-          if (tk.length >= 4 && want.has(norm(tk[0]) + norm(tk[1]) + norm(tk[2]) + norm(tk[3]))) exact.push(st);
-          else {
-            const fn = norm(clean(st.fullName || '')).replace(/[^\u0621-\u064A\u0671-\u06D5]/g, '');
-            if ([...want].some(k => k.length >= 8 && fn.startsWith(k))) loose.push(st);
+      const L = v => norm(clean(String(v ?? ''))).replace(/[^ء-يٱ-ە]/g, '');
+      const forms = [d, od].filter(x => x && L(x.name) && L(x.father) && L(x.grandfather) && L(x.greatGrandfather));
+      if (!forms.length) return skip('اسم جد الأب ناقص في الاستمارة — لم أعدّل شيئاً في EMIS');
+      const sameName = st => forms.some(x => L(st.name) === L(x.name) && L(st.fatherName) === L(x.father) &&
+        L(st.grandFatherName) === L(x.grandfather) && L(st.fathersGrandFatherName) === L(x.greatGrandfather));
+      let cur = null;
+      if (opt.emisId) {
+        cur = unwrap(await emisApi('/student/getstudent/' + opt.emisId));
+        if (!cur || !cur.id || !sameName(cur)) return fail('تغيّر الطالب في EMIS منذ الفحص — لم أعدّل شيئاً');
+      } else {
+        log('🔎 البحث عن الطالب في EMIS...');
+        const keys = forms.map(x => L(x.name) + L(x.father) + L(x.grandfather) + L(x.greatGrandfather));
+        const cands = [];
+        for (let page = 1; page <= 20; page++) {
+          const q = new URLSearchParams({ page: String(page), rowsPerPage: '3000', sortBy: 'id', sortOrder: 'desc', entityId: sm[1] });
+          const j = await emisApi('/student/getstudents?' + q);
+          const data = (j && j.data) || [];
+          for (const st of data) {
+            const fn = L(st.fullName);
+            if (keys.some(k => fn.startsWith(k))) cands.push(st.id);
           }
+          const total = j && j.meta && j.meta.totalCount;
+          if (!data.length || (total ? page * 3000 >= total : data.length < 3000)) break;
         }
-        const total = j && j.meta && j.meta.totalCount;
-        if (!data.length || (total ? page * 3000 >= total : data.length < 3000)) break;
+        if (cands.length > 8) return fail('أسماء كثيرة متشابهة في EMIS (' + cands.length + ') — عدّله يدوياً');
+        const hits = [];
+        for (const id of cands) {
+          const st = unwrap(await emisApi('/student/getstudent/' + id));
+          if (st && st.id && sameName(st)) hits.push(st);
+        }
+        if (!hits.length) return skip('الطالب غير موجود في EMIS (لا يوجد تطابق رباعي كامل) — لا تعديل');
+        if (hits.length > 1) return fail('يوجد ' + hits.length + ' طلاب بنفس الاسم الرباعي في EMIS — عدّله يدوياً');
+        cur = hits[0];
       }
-      const hits = exact.length ? exact : loose;
-      if (!hits.length) { log('ℹ️ الطالب غير موجود في EMIS — لا تعديل'); return { ok: 0, saved: false, upd: true, skip: true, miss: [] }; }
-      if (hits.length > 1) return fail('يوجد ' + hits.length + ' طلاب بنفس الاسم الرباعي في EMIS — عدّله يدوياً');
-      const cur = unwrap(await emisApi('/student/getstudent/' + hits[0].id));
-      if (!cur || !cur.id) return fail('تعذّرت قراءة الطالب من EMIS');
       const b = await registerApi(d, log, 'build');
       if (!b || !b.payload) return { ...(b || {}), upd: true };
       const p = b.payload;
-      // حقول ليست في الاستمارة: تبقى كما هي في EMIS
       for (const k of ['imageUrl', 'notes', 'censusNumber', 'isDisabled', 'specialNeeds', 'fatherIdentification', 'isDroppedOutFromSchool',
         'lastYearResult', 'ageExceptionReason', 'genderExceptionReason', 'homeTown', 'maritalStatus']) delete p[k];
       for (const k of ['latitude', 'longitude', 'schoolPhoneNumber', 'mobilePhoneNumber', 'email', 'website', 'apartmentNumber', 'buildingNumber', 'address1', 'address2']) delete p.address[k];
@@ -3561,15 +3578,31 @@
       out.identification.issuingDate = dOnly(cur.identification && cur.identification.issuingDate);
       if (out.fatherIdentification && out.fatherIdentification.issuingDate) out.fatherIdentification.issuingDate = dOnly(out.fatherIdentification.issuingDate);
       const oldId = String((cur.identification && cur.identification.idNumber) || '');
+      const J = (...a) => a.map(v => clean(String(v ?? ''))).filter(Boolean).join(' ');
+      const emisName = J(cur.name, cur.fatherName, cur.grandFatherName, cur.fathersGrandFatherName, cur.surName);
+      // التغييرات (للتأكيد)
+      const changes = [];
+      const cmp = (label, a, bb) => { if (clean(String(a ?? '')) !== clean(String(bb ?? ''))) changes.push(label + ': ' + (clean(String(a ?? '')) || '—') + ' ← ' + (clean(String(bb ?? '')) || '—')); };
+      cmp('الاسم الرباعي', J(cur.name, cur.fatherName, cur.grandFatherName, cur.fathersGrandFatherName), J(out.name, out.fatherName, out.grandFatherName, out.fathersGrandFatherName));
+      cmp('اللقب', cur.surName, out.surName);
+      cmp('اسم الأم', J(cur.motherName, cur.mothersFatherName, cur.mothersGrandFatherName), J(out.motherName, out.mothersFatherName, out.mothersGrandFatherName));
+      cmp('تاريخ التولد', dOnly(cur.dateOfBirth), out.dateOfBirth);
+      cmp('رقم الهوية', oldId, out.identification.idNumber);
+      cmp('الهاتف', cur.homePhoneNumber, out.homePhoneNumber);
+      if (String(cur.stageId) !== String(out.stageId) || String(cur.classRoomId ?? '') !== String(out.classRoomId ?? '')) changes.push('الصف/الشعبة: ← ' + b.stageTxt);
+      if (opt.dry) {
+        log('✔ وُجد في EMIS: ' + emisName);
+        return { ok: 1, saved: false, upd: true, dry: true, match: { id: cur.id, name: emisName, idNumber: oldId }, changes };
+      }
       if (p.identification.idType === 12 && p.identification.idNumber !== oldId) {
         const chk = await emisApi('/student/checknationalidnumber?value=' + encodeURIComponent(p.identification.idNumber));
         if (chk && chk.isUnique === false) return fail('رقم البطاقة الوطنية الجديد مستخدم مسبقاً في EMIS');
       }
-      log('📤 تعديل في EMIS: ' + [p.name, p.fatherName, p.grandFatherName].join(' ') + ' · ' + b.stageTxt);
+      log('📤 تعديل في EMIS: ' + emisName);
       try { await emisApi('/student/updatestudent', out); }
       catch (e) { return fail('رفض EMIS التعديل: ' + (e && e.message ? e.message : e)); }
       log('✅ عُدّل الطالب في EMIS');
-      return { ok: 1, saved: true, upd: true, miss: [] };
+      return { ok: 1, saved: true, upd: true, miss: [], match: { id: cur.id, name: emisName }, backup: cur };
     }
 
     // على الحاسبة (Tampermonkey): «حفظ التعديل» في تبويب موقع الطلاب ← تعديل هنا
@@ -3579,7 +3612,12 @@
       if (!p || !p.d) return;
       guarded(api, async () => {
         api.setLog('');
-        try { await updateApi(p.d, [p.k, p.oldK], api.addLog); }
+        try {
+          const chk = await updateApi(p.d, p.od, api.addLog, { dry: true });
+          if (!chk.dry) return;
+          if (!confirm('تعديل الطالب في EMIS؟\n\nفي EMIS: ' + chk.match.name + '\n\n' + (chk.changes.join('\n') || 'لا تغييرات في الحقول الرئيسية'))) return;
+          await updateApi(p.d, p.od, api.addLog, { emisId: chk.match.id });
+        }
         catch (e) { if (e && e.isStop) throw e; api.addLog('✖ ' + (e && e.message ? e.message : e)); }
       });
     });
@@ -3618,7 +3656,7 @@
         // (v7.7.6) «ابدأ» من التطبيق: تعبئة الاستمارة المفتوحة مباشرة (بدون شرط «جديد»)
         //          مثلاً بعد «رقم البطاقة مستخدم مسبقاً» تكمل بطالب آخر على نفس الاستمارة
         if (cmd.mode === 'update') {
-          try { r = await updateApi(data, cmd.keys || [], api.addLog); }
+          try { r = await updateApi(data, cmd.od || null, api.addLog, { dry: !!cmd.dry, emisId: cmd.emisId }); }
           catch (e) {
             if (e && e.isStop) throw e;
             r = { ok: 0, saved: false, upd: true, miss: ['خطأ في التعديل: ' + (e && e.message ? e.message : e)] };

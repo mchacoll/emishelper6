@@ -58,6 +58,7 @@ const K_MARKMANY = 'emis_markmany_v1';
 const K_MARK = 'emis_mark_v1';
 const K_SEND = 'emis_send_req_v1';
 const K_UPD = 'emis_upd_req_v1';
+const K_BACKUP = 'emis_backup_before_edit_v1';
 // مفاتيح للتطبيق فقط: لا تُمرَّر بين الصفحتين
 const SITE_ONLY = new Set([K_DATA, K_CMD, 'emis_queue_v1', 'emis_sync_v1']);
 const DESKTOP_WIDTH = 1280;
@@ -110,7 +111,7 @@ function Main() {
   // إرسال طالب واحد من زر «إرسال إلى EMIS»: فحص ثم تأكيد ثم إرسال
   const send = useRef<{ stage: 'check' | 'send'; id: number; k: string; d: StudentData; issues: string[] } | null>(null);
   const sendTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const upd = useRef<{ id: number; k: string; d: StudentData } | null>(null);
+  const upd = useRef<{ id: number; k: string; d: StudentData; od?: StudentData; stage: 'check' | 'save' } | null>(null);
   const updTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const existingRef = useRef<{ keys: string[]; names: string[]; rows: number } | null>(null);
@@ -326,7 +327,7 @@ function Main() {
     if (updTimer.current) clearTimeout(updTimer.current);
   };
   const onUpdRequest = (raw: string) => {
-    let p: { id: number; k: string; oldK?: string; d?: StudentData };
+    let p: { id: number; k: string; oldK?: string; d?: StudentData; od?: StudentData };
     try {
       p = JSON.parse(raw);
     } catch {
@@ -337,11 +338,16 @@ function Main() {
       toast('EMIS مشغول — عدّل هذا الطالب في EMIS لاحقاً');
       return;
     }
-    upd.current = { id: p.id, k: p.k, d: p.d };
-    toast(`جارٍ تعديل ${fullName(p.d)} في EMIS...`);
-    gmSet(K_DATA, JSON.stringify({ ...p.d, reviewed: false }), 'emis');
+    upd.current = { id: p.id, k: p.k, d: p.d, od: p.od, stage: 'check' };
+    toast(`البحث عن ${fullName(p.d)} في EMIS...`);
+    updCmd({ dry: true });
+  };
+  const updCmd = (o: { dry?: boolean; emisId?: number }) => {
+    const cur = upd.current;
+    if (!cur) return;
+    gmSet(K_DATA, JSON.stringify({ ...cur.d, reviewed: false }), 'emis');
     gmSet(K_STATUS, '', 'emis');
-    gmSet(K_CMD, JSON.stringify({ mode: 'update', keys: [p.k, p.oldK], t: Date.now() }), 'emis');
+    gmSet(K_CMD, JSON.stringify({ mode: 'update', od: cur.od || null, ...o, t: Date.now() }), 'emis');
     if (updTimer.current) clearTimeout(updTimer.current);
     updTimer.current = setTimeout(() => {
       if (!upd.current) return;
@@ -352,17 +358,60 @@ function Main() {
   const onUpdStatus = (raw: string) => {
     const cur = upd.current;
     if (!cur) return;
-    let st: { info?: string; saved?: boolean; skip?: boolean; miss?: string[] };
+    let st: {
+      info?: string;
+      saved?: boolean;
+      skip?: boolean;
+      why?: string;
+      dry?: boolean;
+      miss?: string[];
+      match?: { id: number; name: string; idNumber?: string };
+      changes?: string[];
+      backup?: unknown;
+    };
     try {
       st = JSON.parse(raw);
     } catch {
       return;
     }
     if (st.info) return;
-    endUpd();
     const nm = fullName(cur.d);
-    if (st.skip) toast(`${nm} غير موجود في EMIS — عُدّل في موقع الطلاب فقط`);
+    if (st.dry && st.match) {
+      if (updTimer.current) clearTimeout(updTimer.current);
+      const m = st.match;
+      Alert.alert(
+        'تعديل الطالب في EMIS؟',
+        `في موقع الطلاب: ${nm}\nفي EMIS: ${m.name}${m.idNumber ? '\nرقم الهوية في EMIS: ' + m.idNumber : ''}\n\n` +
+          (st.changes?.length ? 'التغييرات:\n• ' + st.changes.join('\n• ') : 'لا تغييرات في الحقول الرئيسية'),
+        [
+          { text: 'لا تعدّل', style: 'cancel', onPress: endUpd },
+          {
+            text: 'تعديل في EMIS',
+            onPress: () => {
+              if (!upd.current) return;
+              upd.current.stage = 'save';
+              toast(`جارٍ تعديل ${nm} في EMIS...`);
+              updCmd({ emisId: m.id });
+            },
+          },
+        ],
+        { cancelable: false },
+      );
+      return;
+    }
+    endUpd();
+    if (st.skip) toast(st.why || `${nm} غير موجود في EMIS — عُدّل في موقع الطلاب فقط`);
     else if (st.saved) {
+      // نسخة احتياطية من سجل EMIS قبل التعديل (للاسترجاع عند الخطأ)
+      if (st.backup) {
+        AsyncStorage.getItem(K_BACKUP)
+          .then(v => {
+            const arr = v ? JSON.parse(v) : [];
+            arr.push({ t: Date.now(), site: nm, emisId: st.match?.id, before: st.backup });
+            return AsyncStorage.setItem(K_BACKUP, JSON.stringify(arr.slice(-200)));
+          })
+          .catch(() => {});
+      }
       logOp(cur.d, cur.id, cur.k, true, 'تعديل');
       emisStale.current = true;
       toast(`✅ عُدّل ${nm} في EMIS أيضاً`);
