@@ -1,7 +1,7 @@
 // ==UserScript==
-// @name         مساعد EMIS – تعبئة تلقائية (v8.6.0)
+// @name         مساعد EMIS – تعبئة تلقائية (v8.7.0)
 // @namespace    emis-helper
-// @version      8.6.0
+// @version      8.7.0
 // @description  تعبئة تلقائية لـ EMIS + حفظ + «تمت المراجعة» + فتح «جديد» + نقل «الاحتياجات الخاصة» من EMIS إلى موقعك
 // @match        *://*/*
 // @grant        GM_setValue
@@ -315,7 +315,7 @@
     ui.dir = 'rtl';
 
     const head = mk('div', 'display:flex;justify-content:space-between;align-items:center;gap:8px');
-    head.appendChild(mk('b', 'font-size:13.5px;', title + ' v8.6.0'));
+    head.appendChild(mk('b', 'font-size:13.5px;', title + ' v8.7.0'));
     const minBtn = mk('button',
       'background:none;border:0;color:#fff;font-size:22px;' +
       'min-width:32px;min-height:32px;cursor:pointer;padding:0;line-height:1;', '−');
@@ -2792,6 +2792,52 @@
     }
     setInterval(() => { refreshIssues().catch(() => {}); }, 2500);
 
+    /* ---------- (v8.7) «حفظ التعديل» في موقع الطلاب ← تعديل الطالب في EMIS أيضاً إن كان موجوداً ----------
+       نحتفظ بنسخة من قائمة الطلاب؛ بعد الضغط على «حفظ التعديل» نقرأ القائمة مرة أخرى
+       ونرسل الطالب الذي تغيّرت بياناته (الاسم الرباعي القديم والجديد للبحث عنه في EMIS) */
+    const K_UPD = 'emis_upd_req_v1';
+    let snap = null, snapBusy = false;
+    const wait = ms => new Promise(r => setTimeout(r, ms));
+    const recSig = rec => {
+      let t = {}; try { t = JSON.parse(rec.details || '{}'); } catch { /* ignore */ }
+      delete t.reviewed;
+      return JSON.stringify([rec.fullName, rec.grade, rec.section, Object.keys(t).sort().map(k => [k, t[k]])]);
+    };
+    const keyOf = d => norm(d.name) + norm(d.father) + norm(d.grandfather) + norm(d.greatGrandfather);
+    async function loadSnap() {
+      const me = await trpc('school.me');
+      if (!me || !me.slug) throw new Error('no-school');
+      const list = await trpc('student.listForSchool', { schoolSlug: me.slug });
+      return { me, map: new Map((list || []).filter(Boolean).map(r => [r.id, r])) };
+    }
+    async function keepSnap() {
+      if (snapBusy || document.hidden) return;
+      snapBusy = true;
+      try { snap = await loadSnap(); } catch { /* غير مسجل كمنسق */ }
+      snapBusy = false;
+    }
+    keepSnap();
+    setInterval(keepSnap, 15000);
+    document.addEventListener('click', ev => {
+      const b = ev.target && ev.target.closest && ev.target.closest('button');
+      if (!b || inUI(b) || !/حفظ\s*التعديل/.test(b.textContent || '')) return;
+      const before = snap;
+      if (!before) return;
+      (async () => {
+        for (const ms of [1500, 2500, 4000]) {
+          await wait(ms);
+          let now; try { now = await loadSnap(); } catch { continue; }
+          let hit = null;
+          for (const [id, rec] of now.map) { const o = before.map.get(id); if (o && recSig(o) !== recSig(rec)) { hit = [o, rec]; break; } }
+          if (!hit) continue;
+          snap = now;
+          const d = recordToData(hit[1], now.me.name), od = recordToData(hit[0], now.me.name);
+          gmSet(K_UPD, JSON.stringify({ id: hit[1].id, k: keyOf(d), oldK: keyOf(od), d, t: Date.now() }));
+          return;
+        }
+      })();
+    }, true);
+
     // على الحاسبة: نتيجة EMIS ← تحديد «تمت المراجعة» عند النجاح
     onChange(K_SEND_RES, nv => {
       if (!nv) return;
@@ -3374,7 +3420,7 @@
       const digits = t => S(t).replace(/[\u0660-\u0669]/g, x => x.charCodeAt(0) - 0x660);
       const idNumber = civil ? digits(d.civilId) : digits(d.nationalId).replace(/\D/g, '');
       if (!idNumber) return fail(civil ? 'رقم هوية الأحوال المدنية فارغ' : 'رقم البطاقة الوطنية فارغ');
-      if (!civil) {
+      if (!civil && dry !== 'build') {
         const chk = await emisApi('/student/checknationalidnumber?value=' + enc(idNumber));
         if (chk && chk.isUnique === false) return fail('رقم البطاقة الوطنية مستخدم مسبقاً في EMIS');
       }
@@ -3401,6 +3447,7 @@
           latitude: 0, longitude: 0, schoolPhoneNumber: '', mobilePhoneNumber: '', email: '', website: '',
         },
       };
+      if (dry === 'build') return { payload, stageTxt: oTxt(stage) + (roomTxt ? ' ' + roomTxt : '') };
       // (v8.6) فحص فقط: كل شيء جاهز، لا نرسل
       if (dry) {
         log('✔ الفحص: جاهز للإرسال');
@@ -3413,6 +3460,73 @@
       log('✅ أُضيف الطالب في EMIS مباشرة');
       return { ok: 1, saved: true, miss: [], api: true };
     }
+
+    /* (v8.7) تعديل طالب موجود في EMIS (بعد «حفظ التعديل» في موقع الطلاب)
+       نبحث عنه بالاسم الرباعي (القديم أو الجديد)، نقرأ سجله كاملاً، نغيّر حقول الاستمارة فقط ونحفظ */
+    async function updateApi(d, keys, log) {
+      const fail = why => { log('✖ ' + why); return { ok: 0, saved: false, upd: true, miss: [why] }; };
+      const sm = location.pathname.match(/schools\/(\d+)/);
+      if (!sm) return fail('افتح «إدارة الطلاب» للمدرسة في EMIS أولاً');
+      const want = new Set((keys || []).filter(Boolean));
+      log('🔎 البحث عن الطالب في EMIS...');
+      const exact = [], loose = [];
+      for (let page = 1; page <= 20; page++) {
+        const q = new URLSearchParams({ page: String(page), rowsPerPage: '3000', sortBy: 'id', sortOrder: 'desc', entityId: sm[1] });
+        const j = await emisApi('/student/getstudents?' + q);
+        const data = (j && j.data) || [];
+        for (const st of data) {
+          const tk = clean(st.fullName || '').split(/\s+/).filter(w => /^[\u0621-\u064A]+$/.test(w));
+          if (tk.length >= 4 && want.has(norm(tk[0]) + norm(tk[1]) + norm(tk[2]) + norm(tk[3]))) exact.push(st);
+          else {
+            const fn = norm(clean(st.fullName || '').replace(/[^\u0621-\u064A]/g, ''));
+            if ([...want].some(k => k.length >= 8 && fn.startsWith(k))) loose.push(st);
+          }
+        }
+        const total = j && j.meta && j.meta.totalCount;
+        if (data.length < 3000 || (total && page * 3000 >= total)) break;
+      }
+      const hits = exact.length ? exact : loose;
+      if (!hits.length) { log('ℹ️ الطالب غير موجود في EMIS — لا تعديل'); return { ok: 0, saved: false, upd: true, skip: true, miss: [] }; }
+      if (hits.length > 1) return fail('يوجد ' + hits.length + ' طلاب بنفس الاسم الرباعي في EMIS — عدّله يدوياً');
+      const cur = unwrap(await emisApi('/student/getstudent/' + hits[0].id));
+      if (!cur || !cur.id) return fail('تعذّرت قراءة الطالب من EMIS');
+      const b = await registerApi(d, log, 'build');
+      if (!b || !b.payload) return { ...(b || {}), upd: true };
+      const p = b.payload;
+      // حقول ليست في الاستمارة: تبقى كما هي في EMIS
+      for (const k of ['imageUrl', 'notes', 'censusNumber', 'isDisabled', 'specialNeeds', 'fatherIdentification', 'isDroppedOutFromSchool',
+        'lastYearResult', 'ageExceptionReason', 'genderExceptionReason', 'homeTown', 'maritalStatus']) delete p[k];
+      for (const k of ['latitude', 'longitude', 'schoolPhoneNumber', 'mobilePhoneNumber', 'email', 'website', 'apartmentNumber', 'buildingNumber', 'address1', 'address2']) delete p.address[k];
+      for (const k of ['nameOfDocument', 'issuer', 'issuingDate']) delete p.identification[k];
+      const dOnly = v => { const m = String(v || '').match(/^(\d{4})-(\d{1,2})-(\d{1,2})/); return m ? m[1] + '-' + m[2].padStart(2, '0') + '-' + m[3].padStart(2, '0') : null; };
+      const out = { ...cur, ...p, id: cur.id,
+        identification: { ...(cur.identification || {}), ...p.identification },
+        address: { ...(cur.address || {}), ...p.address } };
+      out.identification.issuingDate = dOnly(cur.identification && cur.identification.issuingDate);
+      if (out.fatherIdentification && out.fatherIdentification.issuingDate) out.fatherIdentification.issuingDate = dOnly(out.fatherIdentification.issuingDate);
+      const oldId = String((cur.identification && cur.identification.idNumber) || '');
+      if (p.identification.idType === 12 && p.identification.idNumber !== oldId) {
+        const chk = await emisApi('/student/checknationalidnumber?value=' + encodeURIComponent(p.identification.idNumber));
+        if (chk && chk.isUnique === false) return fail('رقم البطاقة الوطنية الجديد مستخدم مسبقاً في EMIS');
+      }
+      log('📤 تعديل في EMIS: ' + [p.name, p.fatherName, p.grandFatherName].join(' ') + ' · ' + b.stageTxt);
+      try { await emisApi('/student/updatestudent', out); }
+      catch (e) { return fail('رفض EMIS التعديل: ' + (e && e.message ? e.message : e)); }
+      log('✅ عُدّل الطالب في EMIS');
+      return { ok: 1, saved: true, upd: true, miss: [] };
+    }
+
+    // على الحاسبة (Tampermonkey): «حفظ التعديل» في تبويب موقع الطلاب ← تعديل هنا
+    onChange('emis_upd_req_v1', nv => {
+      if (!nv || window.ReactNativeWebView) return;
+      let p; try { p = JSON.parse(nv); } catch { return; }
+      if (!p || !p.d) return;
+      guarded(api, async () => {
+        api.setLog('');
+        try { await updateApi(p.d, [p.k, p.oldK], api.addLog); }
+        catch (e) { if (e && e.isStop) throw e; api.addLog('✖ ' + (e && e.message ? e.message : e)); }
+      });
+    });
 
     // (v8.3) على الحاسبة (Tampermonkey): طلب «إرسال إلى EMIS» من تبويب موقع الطلاب
     //        (داخل التطبيق لا يصل هذا الطلب إلى هنا؛ التطبيق يتولاه ويطلب التأكيد)
@@ -3447,7 +3561,14 @@
         let r;
         // (v7.7.6) «ابدأ» من التطبيق: تعبئة الاستمارة المفتوحة مباشرة (بدون شرط «جديد»)
         //          مثلاً بعد «رقم البطاقة مستخدم مسبقاً» تكمل بطالب آخر على نفس الاستمارة
-        if (cmd.mode === 'api' || cmd.mode === 'apiCheck') {
+        if (cmd.mode === 'update') {
+          try { r = await updateApi(data, cmd.keys || [], api.addLog); }
+          catch (e) {
+            if (e && e.isStop) throw e;
+            r = { ok: 0, saved: false, upd: true, miss: ['خطأ في التعديل: ' + (e && e.message ? e.message : e)] };
+          }
+        }
+        else if (cmd.mode === 'api' || cmd.mode === 'apiCheck') {
           try { r = await registerApi(data, api.addLog, cmd.mode === 'apiCheck'); }
           catch (e) {
             if (e && e.isStop) throw e;

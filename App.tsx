@@ -54,6 +54,7 @@ const K_CMP = 'emis_compare_v1';
 const K_MARKMANY = 'emis_markmany_v1';
 const K_MARK = 'emis_mark_v1';
 const K_SEND = 'emis_send_req_v1';
+const K_UPD = 'emis_upd_req_v1';
 // مفاتيح للتطبيق فقط: لا تُمرَّر بين الصفحتين
 const SITE_ONLY = new Set([K_DATA, K_CMD, 'emis_queue_v1', 'emis_sync_v1']);
 const DESKTOP_WIDTH = 1280;
@@ -102,6 +103,8 @@ function Main() {
   // إرسال طالب واحد من زر «إرسال إلى EMIS»: فحص ثم تأكيد ثم إرسال
   const send = useRef<{ stage: 'check' | 'send'; id: number; k: string; d: StudentData; issues: string[] } | null>(null);
   const sendTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const upd = useRef<{ id: number; k: string; d: StudentData } | null>(null);
+  const updTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const existingRef = useRef<{ keys: string[]; names: string[]; rows: number } | null>(null);
   const compareStep = useRef<'none' | 'emis' | 'site'>('none');
@@ -283,7 +286,7 @@ function Main() {
       Alert.alert('إرسال إلى EMIS', p.error || 'تعذّرت قراءة الطالب');
       return;
     }
-    if (send.current) {
+    if (send.current || upd.current) {
       toast('انتظر حتى ينتهي الإرسال الحالي');
       return;
     }
@@ -292,7 +295,61 @@ function Main() {
     emisCmd('apiCheck', p.d);
   };
 
+  /* ===================== «حفظ التعديل» في موقع الطلاب ← تعديل في EMIS ===================== */
+  const endUpd = () => {
+    upd.current = null;
+    if (updTimer.current) clearTimeout(updTimer.current);
+  };
+  const onUpdRequest = (raw: string) => {
+    let p: { id: number; k: string; oldK?: string; d?: StudentData };
+    try {
+      p = JSON.parse(raw);
+    } catch {
+      return;
+    }
+    if (!p.d) return;
+    if (send.current || upd.current) {
+      toast('EMIS مشغول — عدّل هذا الطالب في EMIS لاحقاً');
+      return;
+    }
+    upd.current = { id: p.id, k: p.k, d: p.d };
+    toast(`جارٍ تعديل ${fullName(p.d)} في EMIS...`);
+    gmSet(K_DATA, JSON.stringify({ ...p.d, reviewed: false }), 'emis');
+    gmSet(K_STATUS, '', 'emis');
+    gmSet(K_CMD, JSON.stringify({ mode: 'update', keys: [p.k, p.oldK], t: Date.now() }), 'emis');
+    if (updTimer.current) clearTimeout(updTimer.current);
+    updTimer.current = setTimeout(() => {
+      if (!upd.current) return;
+      endUpd();
+      toast('لم يصل رد من EMIS — افتح «إدارة الطلاب» في EMIS وتحقق من التعديل');
+    }, 45000);
+  };
+  const onUpdStatus = (raw: string) => {
+    const cur = upd.current;
+    if (!cur) return;
+    let st: { info?: string; saved?: boolean; skip?: boolean; miss?: string[] };
+    try {
+      st = JSON.parse(raw);
+    } catch {
+      return;
+    }
+    if (st.info) return;
+    endUpd();
+    const nm = fullName(cur.d);
+    if (st.skip) toast(`${nm} غير موجود في EMIS — عُدّل في موقع الطلاب فقط`);
+    else if (st.saved) {
+      logOp(cur.d, cur.id, cur.k, true, 'تعديل');
+      emisStale.current = true;
+      toast(`✅ عُدّل ${nm} في EMIS أيضاً`);
+    } else {
+      const why = (st.miss || []).join('\n') || 'سبب غير معروف';
+      logOp(cur.d, cur.id, cur.k, false, 'تعديل: ' + why);
+      Alert.alert('لم يُعدَّل في EMIS', `${nm}\n\n${why}`);
+    }
+  };
+
   const onEmisStatus = (raw: string) => {
+    if (upd.current && !send.current) return onUpdStatus(raw);
     const cur = send.current;
     if (!cur) return;
     let st: { info?: string; saved?: boolean; ok?: number; miss?: string[]; dry?: boolean; summary?: { stage: string; room: string; place: string; city: string; gender: string; idNumber: string } };
@@ -528,6 +585,7 @@ function Main() {
           if (pane === 'site') {
             // طلب زر «إرسال إلى EMIS»: يتولاه التطبيق فقط (لا يُمرَّر لـ EMIS حتى لا يُسجَّل مرتين)
             if (m.k === K_SEND) return void (str && onSendRequest(str));
+            if (m.k === K_UPD) return void (str && onUpdRequest(str));
             if (m.k === K_CMP) return void (str && onCompareResult(str));
             if (m.k === K_MARKMANY) return void (str && onMarkManyProgress(str));
             if (m.k === K_MARK) {
