@@ -1,7 +1,7 @@
 // ==UserScript==
-// @name         مساعد EMIS – تعبئة تلقائية (v8.7.0)
+// @name         مساعد EMIS – تعبئة تلقائية (v8.7.1)
 // @namespace    emis-helper
-// @version      8.7.0
+// @version      8.7.1
 // @description  تعبئة تلقائية لـ EMIS + حفظ + «تمت المراجعة» + فتح «جديد» + نقل «الاحتياجات الخاصة» من EMIS إلى موقعك
 // @match        *://*/*
 // @grant        GM_setValue
@@ -58,7 +58,8 @@
 
   const norm = s => (s ?? '').toString()
     .replace(/[ً-ٰٟـ‎‏]/g, '')
-    .replace(/[أإآٱ]/g, 'ا').replace(/ى/g, 'ي').replace(/ة/g, 'ه')
+    .replace(/[أإآٱ]/g, 'ا').replace(/[ىیېئ]/g, 'ي').replace(/[ةەھۀ]/g, 'ه')
+    .replace(/[کڪ]/g, 'ك').replace(/[ؤۆ]/g, 'و')   // (v8.7.1) لوحات المفاتيح الفارسية/الكردية
     .replace(/[٠-٩]/g, d => d.charCodeAt(0) - 0x660)
     .replace(/[*:：]/g, '').replace(/\s+/g, '').toLowerCase();
 
@@ -315,7 +316,7 @@
     ui.dir = 'rtl';
 
     const head = mk('div', 'display:flex;justify-content:space-between;align-items:center;gap:8px');
-    head.appendChild(mk('b', 'font-size:13.5px;', title + ' v8.7.0'));
+    head.appendChild(mk('b', 'font-size:13.5px;', title + ' v8.7.1'));
     const minBtn = mk('button',
       'background:none;border:0;color:#fff;font-size:22px;' +
       'min-width:32px;min-height:32px;cursor:pointer;padding:0;line-height:1;', '−');
@@ -2678,8 +2679,8 @@
         for (const rec of list) {
           if (!rec || typeof rec !== 'object') continue;
           const d = recordToData(rec, me.name);
-          const k3 = norm(d.name) + norm(d.father) + norm(d.grandfather);
-          const k4 = k3 + norm(d.greatGrandfather);
+          const k3 = (norm(d.name) + norm(d.father) + norm(d.grandfather)).replace(/[^\u0621-\u064A\u0671-\u06D5]/g, '');
+          const k4 = k3 + norm(d.greatGrandfather).replace(/[^\u0621-\u064A\u0671-\u06D5]/g, '');
           const inEmis = !!d.greatGrandfather && (keys.has(k4) || names.some(n => n.startsWith(k4)));
           items.push({
             id: rec.id, k: k4,
@@ -2803,7 +2804,7 @@
       delete t.reviewed;
       return JSON.stringify([rec.fullName, rec.grade, rec.section, Object.keys(t).sort().map(k => [k, t[k]])]);
     };
-    const keyOf = d => norm(d.name) + norm(d.father) + norm(d.grandfather) + norm(d.greatGrandfather);
+    const keyOf = d => (norm(d.name) + norm(d.father) + norm(d.grandfather) + norm(d.greatGrandfather)).replace(/[^\u0621-\u064A\u0671-\u06D5]/g, '');
     async function loadSnap() {
       const me = await trpc('school.me');
       if (!me || !me.slug) throw new Error('no-school');
@@ -3095,7 +3096,7 @@
             if (!txt || seenRows.has(txt)) continue;
             seenRows.add(txt);
             for (const c of r.querySelectorAll('td')) {
-              const tk = clean(c.innerText || c.textContent || '').split(/\s+/).filter(w => /^[\u0621-\u064A]+$/.test(w));
+              const tk = clean(c.innerText || c.textContent || '').split(/\s+/).map(norm).filter(w => /^[\u0621-\u064A\u0671-\u06D5]+$/.test(w));
               if (tk.length >= 4) keys.add(norm(tk[0]) + norm(tk[1]) + norm(tk[2]) + norm(tk[3]));   // (v7.9.1) الاسم الرباعي فقط
               if (tk.length >= 3) names.add(norm(tk.join('')));
             }
@@ -3209,10 +3210,10 @@
           for (const st of data) {
             rows++;
             // (v7.9.1) المطابقة بالاسم الرباعي فقط
-            const tk = clean(st.fullName || '').split(/\s+/).filter(w => /^[\u0621-\u064A]+$/.test(w));
+            const tk = clean(st.fullName || '').split(/\s+/).map(norm).filter(w => /^[\u0621-\u064A\u0671-\u06D5]+$/.test(w));
             if (tk.length >= 4) keys.add(norm(tk[0]) + norm(tk[1]) + norm(tk[2]) + norm(tk[3]));
             // (v8.2) الاسم الكامل بدون مسافات: يطابق الأسماء المركبة («عبد الله» = «عبدالله»)
-            const fullN = norm(clean(st.fullName || '').replace(/[^\u0621-\u064A\s]/g, ' '));
+            const fullN = norm(clean(st.fullName || '')).replace(/[^\u0621-\u064A\u0671-\u06D5]/g, '');
             if (fullN.length >= 8) names.add(fullN);
           }
           prog({ done: false, rows, total });
@@ -3475,15 +3476,15 @@
         const j = await emisApi('/student/getstudents?' + q);
         const data = (j && j.data) || [];
         for (const st of data) {
-          const tk = clean(st.fullName || '').split(/\s+/).filter(w => /^[\u0621-\u064A]+$/.test(w));
+          const tk = clean(st.fullName || '').split(/\s+/).map(norm).filter(w => /^[\u0621-\u064A\u0671-\u06D5]+$/.test(w));
           if (tk.length >= 4 && want.has(norm(tk[0]) + norm(tk[1]) + norm(tk[2]) + norm(tk[3]))) exact.push(st);
           else {
-            const fn = norm(clean(st.fullName || '').replace(/[^\u0621-\u064A]/g, ''));
+            const fn = norm(clean(st.fullName || '')).replace(/[^\u0621-\u064A\u0671-\u06D5]/g, '');
             if ([...want].some(k => k.length >= 8 && fn.startsWith(k))) loose.push(st);
           }
         }
         const total = j && j.meta && j.meta.totalCount;
-        if (data.length < 3000 || (total && page * 3000 >= total)) break;
+        if (!data.length || (total ? page * 3000 >= total : data.length < 3000)) break;
       }
       const hits = exact.length ? exact : loose;
       if (!hits.length) { log('ℹ️ الطالب غير موجود في EMIS — لا تعديل'); return { ok: 0, saved: false, upd: true, skip: true, miss: [] }; }
