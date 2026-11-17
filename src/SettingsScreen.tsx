@@ -183,7 +183,7 @@ export function SettingsScreen(props: {
           />
 
           <T style={{ color: colors.muted, fontSize: 12, textAlign: 'center', marginTop: 12 }}>
-            مساعد EMIS
+            ميسّر التسجيل
           </T>
         </ScrollView>
         <SchoolEditor value={editing} onSave={putRule} onClose={() => setEditing(null)} />

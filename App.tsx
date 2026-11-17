@@ -195,8 +195,8 @@ function Main() {
   const injection = useMemo(() => {
     const siteHost = hostOf(normUrl(settings.siteUrl));
     const emisHost = hostOf(normUrl(settings.emisUrl));
-    return buildInjection(siteHost ? [siteHost] : [], emisHost ? [emisHost] : [], !settings.showPageBar, script?.source, JSON.parse(rulesJson));
-  }, [settings.siteUrl, settings.emisUrl, settings.showPageBar, script, rulesJson]);
+    return buildInjection(siteHost ? [siteHost] : [], emisHost ? [emisHost] : [], true, script?.source, JSON.parse(rulesJson));
+  }, [settings.siteUrl, settings.emisUrl, script, rulesJson]);
 
   /* ---------- التحديث ---------- */
   const scriptRef = useRef(script);
@@ -583,7 +583,7 @@ function Main() {
   const buildLogText = () => {
     const s = settingsRef.current;
     return [
-      `سجل مساعد EMIS (التطبيق v${APP_VERSION} · السكربت v${scriptRef.current?.version || '?'})`,
+      `سجل ميسّر التسجيل (التطبيق v${APP_VERSION} · السكربت v${scriptRef.current?.version || '?'})`,
       `وضع الكمبيوتر: ${s.desktopEmis ? 'مفعّل' : 'غير مفعّل'} — قوائم كالكمبيوتر: ${s.desktopUA ? 'نعم' : 'لا'}`,
       `المدارس: ${normalizedSchools(s.schools).map(r => `${r.key || 'الباقي'}=${r.mode === 'form' ? 'استمارة' : [r.gov, r.place, r.city].filter(Boolean).join('/')}`).join(' | ')}`,
       '',
@@ -646,7 +646,7 @@ function Main() {
         pointerEvents={on ? 'auto' : 'none'}
       >
         <WebView
-          key={`${p}-${reloadKey[p]}-${url}-${desktop ? 'd' : 'm'}-${settings.showPageBar ? 'b' : 'n'}-${p === 'emis' && settings.desktopUA ? 'u' : ''}-${rulesJson.length}`}
+          key={`${p}-${reloadKey[p]}-${url}-${desktop ? 'd' : 'm'}-${p === 'emis' && settings.desktopUA ? 'u' : ''}-${rulesJson.length}`}
           ref={views[p]}
           source={{ uri: url }}
           style={styles.fill}
