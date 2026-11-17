@@ -1,22 +1,22 @@
 {
   "expo": {
-    "name": "ميسّر التسجيل",
+    "name": "جسر EMIS",
     "slug": "emishelper",
-    "version": "8.10.0",
+    "version": "8.11.0",
     "orientation": "default",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "light",
-    "backgroundColor": "#0f3b57",
+    "backgroundColor": "#0b1f4d",
     "splash": {
       "image": "./assets/splash-icon.png",
       "resizeMode": "contain",
-      "backgroundColor": "#0F3B57"
+      "backgroundColor": "#0b1f4d"
     },
     "android": {
       "package": "com.emishelper.app",
       "versionCode": 8100,
       "adaptiveIcon": {
-        "backgroundColor": "#0F3B57",
+        "backgroundColor": "#3b5fdc",
         "foregroundImage": "./assets/android-icon-foreground.png",
         "backgroundImage": "./assets/android-icon-background.png",
         "monochromeImage": "./assets/android-icon-monochrome.png"

@@ -35,7 +35,7 @@ export function Onboarding({ visible, onDone }: { visible: boolean; onDone: () =
             <Icon name="lightning-bolt" size={34} color={colors.navy} />
           </View>
           <T bold style={{ color: '#fff', fontSize: 26, textAlign: 'center' }}>
-            ميسّر التسجيل
+            جسر EMIS
           </T>
           <T style={{ color: 'rgba(255,255,255,0.75)', fontSize: 14, textAlign: 'center' }}>
             تعبئة استمارات الطلاب في EMIS بضغطة واحدة

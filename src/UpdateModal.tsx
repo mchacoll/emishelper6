@@ -55,7 +55,7 @@ export function UpdateModal({ manifest, onClose }: { manifest: Manifest | null; 
           {error ? <T style={{ color: colors.red, fontSize: 12, textAlign: 'center' }}>{error}</T> : null}
 
           <T style={{ fontSize: 12, color: colors.muted, textAlign: 'center', lineHeight: 19 }}>
-            يُثبَّت فوق التطبيق الحالي، ويبقى تسجيل دخولك وقائمة الطلاب كما هي. قد يطلب الهاتف السماح بتثبيت التطبيقات من «ميسّر التسجيل» أول مرة.
+            يُثبَّت فوق التطبيق الحالي، ويبقى تسجيل دخولك وقائمة الطلاب كما هي. قد يطلب الهاتف السماح بتثبيت التطبيقات من «جسر EMIS» أول مرة.
           </T>
           <View style={{ flexDirection: ROW, gap: 8 }}>
             <Button
