@@ -652,7 +652,7 @@ function Main() {
   const buildLogText = () => {
     const s = settingsRef.current;
     return [
-      `سجل جسر EMIS (التطبيق v${APP_VERSION} · السكربت v${scriptRef.current?.version || '?'})`,
+      `سجل بوابة EMIS (التطبيق v${APP_VERSION} · السكربت v${scriptRef.current?.version || '?'})`,
       `وضع الكمبيوتر: ${s.desktopEmis ? 'مفعّل' : 'غير مفعّل'} — قوائم كالكمبيوتر: ${s.desktopUA ? 'نعم' : 'لا'}`,
       `المدارس: ${normalizedSchools(s.schools).map(r => `${r.key || 'الباقي'}=${r.mode === 'form' ? 'استمارة' : [r.gov, r.place, r.city].filter(Boolean).join('/')}`).join(' | ')}`,
       '',
