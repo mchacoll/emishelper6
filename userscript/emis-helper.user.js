@@ -1,7 +1,7 @@
 // ==UserScript==
-// @name         مساعد EMIS – تعبئة تلقائية (v8.7.1)
+// @name         مساعد EMIS – تعبئة تلقائية (v8.8.0)
 // @namespace    emis-helper
-// @version      8.7.1
+// @version      8.8.0
 // @description  تعبئة تلقائية لـ EMIS + حفظ + «تمت المراجعة» + فتح «جديد» + نقل «الاحتياجات الخاصة» من EMIS إلى موقعك
 // @match        *://*/*
 // @grant        GM_setValue
@@ -316,7 +316,7 @@
     ui.dir = 'rtl';
 
     const head = mk('div', 'display:flex;justify-content:space-between;align-items:center;gap:8px');
-    head.appendChild(mk('b', 'font-size:13.5px;', title + ' v8.7.1'));
+    head.appendChild(mk('b', 'font-size:13.5px;', title + ' v8.8.0'));
     const minBtn = mk('button',
       'background:none;border:0;color:#fff;font-size:22px;' +
       'min-width:32px;min-height:32px;cursor:pointer;padding:0;line-height:1;', '−');
@@ -2819,6 +2819,45 @@
     }
     keepSnap();
     setInterval(keepSnap, 15000);
+
+    /* ---------- (v8.8) «إرسال المحدَّدين إلى EMIS» في موقع الطلاب ----------
+       الزر في الموقع علامة فقط: data-action="send-many-to-emis" data-student-ids="[1,2,3]"
+       (أو مربعات تحديد data-emis-select data-student-id) — والتطبيق يفحص ثم يطلب تأكيداً واحداً */
+    const K_SENDMANY = 'emis_sendmany_req_v1';
+    document.addEventListener('click', async ev => {
+      const btn = ev.target && ev.target.closest && ev.target.closest('[data-action="send-many-to-emis"]');
+      if (!btn || inUI(btn)) return;
+      ev.preventDefault();
+      ev.stopPropagation();
+      if (btn.dataset.emisBusy === '1') return;
+      btn.dataset.emisBusy = '1';
+      try {
+        let ids = [];
+        try { ids = JSON.parse(btn.getAttribute('data-student-ids') || '[]'); } catch { ids = String(btn.getAttribute('data-student-ids') || '').split(/[^\d]+/); }
+        if (!Array.isArray(ids) || !ids.length) {
+          ids = [...document.querySelectorAll('[data-emis-select]')]
+            .filter(x => x.checked || x.getAttribute('aria-checked') === 'true' || x.getAttribute('data-state') === 'checked')
+            .map(x => x.getAttribute('data-student-id'));
+        }
+        ids = [...new Set(ids.map(Number).filter(Boolean))];
+        if (!ids.length) throw new Error('لم تحدد أي طالب');
+        const now = await loadSnap();
+        const items = [];
+        for (const id of ids) {
+          const rec = now.map.get(id);
+          if (!rec) continue;
+          const d = recordToData(rec, now.me.name);
+          items.push({ id, k: keyOf(d), d, issues: localIssues(d) });
+        }
+        if (!items.length) throw new Error('لم أجد الطلاب المحددين في قائمة المدرسة');
+        gmSet(K_SENDMANY, JSON.stringify({ items, t: Date.now() }));
+      } catch (e) {
+        gmSet(K_SENDMANY, JSON.stringify({ error: (e && e.message) || String(e), t: Date.now() }));
+        if (!window.ReactNativeWebView) alert('إرسال المحددين: ' + ((e && e.message) || e));
+      } finally {
+        setTimeout(() => { btn.dataset.emisBusy = ''; }, 1500);
+      }
+    }, true);
     document.addEventListener('click', ev => {
       const b = ev.target && ev.target.closest && ev.target.closest('button');
       if (!b || inUI(b) || !/حفظ\s*التعديل/.test(b.textContent || '')) return;
@@ -3516,6 +3555,66 @@
       log('✅ عُدّل الطالب في EMIS');
       return { ok: 1, saved: true, upd: true, miss: [] };
     }
+
+    /* (v8.8) دفعة: فحص (mode 'check') أو إرسال (mode 'send') لعدة طلاب
+       يتخطى الموجودين في EMIS (بالاسم الرباعي) والمكررين داخل الدفعة */
+    async function emisIndex() {
+      const sm = location.pathname.match(/schools\/(\d+)/);
+      const keys = new Set(), names = [];
+      for (let page = 1; page <= 20; page++) {
+        const q = new URLSearchParams({ page: String(page), rowsPerPage: '3000', sortBy: 'id', sortOrder: 'desc', entityId: sm[1] });
+        const j = await emisApi('/student/getstudents?' + q);
+        const data = (j && j.data) || [];
+        for (const st of data) {
+          const tk = clean(st.fullName || '').split(/\s+/).map(norm).filter(w => /^[ء-يٱ-ە]+$/.test(w));
+          if (tk.length >= 4) keys.add(tk[0] + tk[1] + tk[2] + tk[3]);
+          names.push(norm(clean(st.fullName || '')).replace(/[^ء-يٱ-ە]/g, ''));
+        }
+        const total = j && j.meta && j.meta.totalCount;
+        if (!data.length || (total ? page * 3000 >= total : data.length < 3000)) break;
+      }
+      return { keys, names };
+    }
+    const K_BATCH_CMD = 'emis_batch_cmd_v1', K_BATCH_RES = 'emis_batch_res_v1';
+    async function batchApi(mode, items, log) {
+      const out = o => gmSet(K_BATCH_RES, JSON.stringify({ mode, ...o, t: Date.now() }));
+      const res = [];
+      try {
+        if (!location.pathname.match(/schools\/(\d+)/)) throw new Error('افتح «إدارة الطلاب» للمدرسة في EMIS أولاً');
+        log('🔎 قراءة طلاب EMIS...');
+        const idx = await emisIndex();
+        const seen = new Set();
+        out({ running: true, done: 0, total: items.length, results: [] });
+        for (const it of items) {
+          checkStop();
+          let r;
+          const inEmis = idx.keys.has(it.k) || (it.k.length >= 8 && idx.names.some(n => n.startsWith(it.k)));
+          if (inEmis || seen.has(it.k)) r = { id: it.id, st: 'exists' };
+          else {
+            try {
+              const x = await registerApi(it.d, log, mode !== 'send');
+              r = { id: it.id, st: x.saved ? 'saved' : (x.ok && x.dry ? 'ready' : 'fail'), why: (x.miss || []).join('، ') };
+            } catch (e) {
+              if (e && e.isStop) throw e;
+              r = { id: it.id, st: 'fail', why: String((e && e.message) || e) };
+            }
+            if (r.st !== 'fail') seen.add(it.k);
+          }
+          res.push(r);
+          out({ running: true, done: res.length, total: items.length, results: res });
+          if (r.st === 'saved') await sleep(400);
+        }
+        out({ running: false, done: res.length, total: items.length, results: res });
+      } catch (e) {
+        out({ running: false, done: res.length, total: items.length, results: res, error: e && e.isStop ? 'أُوقف' : (e && e.message) || String(e) });
+      }
+    }
+    onChange(K_BATCH_CMD, nv => {
+      if (!nv) return;
+      let c; try { c = JSON.parse(nv); } catch { return; }
+      if (!c || !Array.isArray(c.items) || !c.items.length) return;
+      guarded(api, async () => { api.setLog(''); await batchApi(c.mode, c.items, api.addLog); });
+    });
 
     // على الحاسبة (Tampermonkey): «حفظ التعديل» في تبويب موقع الطلاب ← تعديل هنا
     onChange('emis_upd_req_v1', nv => {
