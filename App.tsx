@@ -84,7 +84,7 @@ function Main() {
   });
   const [ready, setReady] = useState(false);
   const [settings, setSettings] = useState<Settings>(DEFAULT_SETTINGS);
-  const [active, setActive] = useState<Tab>('emis');
+  const [active, setActive] = useState<Tab>('site');
   const [showSettings, setShowSettings] = useState(false);
   const [showGuide, setShowGuide] = useState(false);
   const [showOps, setShowOps] = useState(false);
@@ -125,7 +125,7 @@ function Main() {
   const emisRef = useRef<WebView>(null);
   const views: Record<Pane, RefObject<WebView | null>> = { site: siteRef, emis: emisRef };
   const canBack = useRef<Record<Pane, boolean>>({ site: false, emis: false });
-  const activeRef = useRef<Tab>('emis');
+  const activeRef = useRef<Tab>('site');
   activeRef.current = active;
   const settingsRef = useRef(settings);
   settingsRef.current = settings;

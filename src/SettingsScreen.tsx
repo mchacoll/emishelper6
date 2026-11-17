@@ -89,14 +89,6 @@ export function SettingsScreen(props: {
               value={d.split}
               onChange={v => set('split', v)}
             />
-            <SettingRow
-              icon="dock-window"
-              title="إظهار الشريط الأزرق داخل الصفحات"
-              subtitle="شريط السكربت القديم داخل صفحة الموقع و EMIS."
-              value={d.showPageBar}
-              onChange={v => set('showPageBar', v)}
-              last
-            />
           </Card>
 
           <SectionTitle>الروابط</SectionTitle>
