@@ -6,6 +6,12 @@ on:
     branches: [main, 'claude/**']
     paths-ignore: ['**.md']
 
+# بناء واحد في كل مرة: البناء الأحدث يلغي الأقدم، فلا يُنشر إصدار قديم بعد الأحدث
+# (كان «آخر إصدار» يصير القديم إذا انتهى بناؤه متأخراً، فلا يرى التطبيق التحديث)
+concurrency:
+  group: build-apk-${{ github.ref }}
+  cancel-in-progress: true
+
 permissions:
   contents: write # لنشر الإصدار (التحديث من داخل التطبيق)
 
