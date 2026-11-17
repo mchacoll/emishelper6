@@ -1,7 +1,7 @@
 // ==UserScript==
-// @name         مساعد EMIS – تعبئة تلقائية (v8.9.1)
+// @name         مساعد EMIS – تعبئة تلقائية (v8.10.0)
 // @namespace    emis-helper
-// @version      8.9.1
+// @version      8.10.0
 // @description  تعبئة تلقائية لـ EMIS + حفظ + «تمت المراجعة» + فتح «جديد» + نقل «الاحتياجات الخاصة» من EMIS إلى موقعك
 // @match        *://*/*
 // @grant        GM_setValue
@@ -316,7 +316,7 @@
     ui.dir = 'rtl';
 
     const head = mk('div', 'display:flex;justify-content:space-between;align-items:center;gap:8px');
-    head.appendChild(mk('b', 'font-size:13.5px;', title + ' v8.9.1'));
+    head.appendChild(mk('b', 'font-size:13.5px;', title + ' v8.10.0'));
     const minBtn = mk('button',
       'background:none;border:0;color:#fff;font-size:22px;' +
       'min-width:32px;min-height:32px;cursor:pointer;padding:0;line-height:1;', '−');
@@ -3480,7 +3480,30 @@
       // (v8.6) فحص فقط: كل شيء جاهز، لا نرسل
       if (dry) {
         log('✔ الفحص: جاهز للإرسال');
-        return { ok: 1, dry: true, saved: false, miss: [], api: true,
+        // (v8.10) معاينة: ما في الاستمارة ← ما سيُكتب في EMIS
+        const J = (...a) => a.map(S).filter(Boolean).join(' ');
+        const rows = [
+          ['الاسم الرباعي', J(d.name, d.father, d.grandfather, d.greatGrandfather), J(payload.name, payload.fatherName, payload.grandFatherName, payload.fathersGrandFatherName)],
+          ['اللقب', S(d.surname), payload.surName],
+          ['اسم الأم', J(d.mother, d.motherFather, d.motherGrandfather), J(payload.motherName, payload.mothersFatherName, payload.mothersGrandFatherName)],
+          ['تاريخ التولد', S(d.dob), dob],
+          ['الجنس', S(d.gender), gOpt ? oTxt(gOpt) : (gender === 2 ? 'أنثى' : 'ذكر')],
+          ['الصف', S(d.grade), oTxt(stage)],
+          ['الشعبة', S(d.section), roomTxt || 'بدون شعبة'],
+          [civil ? 'هوية الأحوال المدنية' : 'البطاقة الوطنية', S(civil ? d.civilId : d.nationalId), idNumber],
+          ['اللغة الأم', S(d.motherTongue), oTxt(mt)],
+          ['لغة الدراسة', S(d.studyLang), sl ? oTxt(sl) : String(DEFAULTS.studyLanguage)],
+          ['الديانة', S(d.religion), oTxt(rel)],
+          ['فصيلة الدم', S(d.blood), blood ? oTxt(blood) : ''],
+          ['المستوى المعيشي', S(d.living), eco ? oTxt(eco) : ''],
+          ['المكان', J(pl.gov, pl.text), placeName],
+          ['المدينة', S(d.citySite), S(pl.city)],
+          ['الحي / المحلة / الزقاق', J(d.neighborhood, d.mahalla, d.alley), J(payload.address.area, payload.address.quarter, payload.address.street)],
+          ['أقرب نقطة دالة', S(d.landmark), payload.address.closestLocation],
+          ['الهاتف', S(d.phone), payload.homePhoneNumber],
+          ['الرعاية الاجتماعية', S(d.welfare), payload.isCoveredBySocialWelfare ? 'نعم' : 'لا'],
+        ];
+        return { ok: 1, dry: true, saved: false, miss: [], api: true, rows,
           summary: { stage: oTxt(stage), room: roomTxt, place: placeName, city: pl.city, gender: gender === 2 ? 'أنثى' : 'ذكر', idNumber } };
       }
       log(`📤 إرسال: ${payload.name} ${payload.fatherName} ${payload.grandFatherName} · ${oTxt(stage)}${roomTxt ? ' ' + roomTxt : ''} · ${gender === 2 ? 'أنثى' : 'ذكر'}`);

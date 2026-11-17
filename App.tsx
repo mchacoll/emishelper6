@@ -10,6 +10,7 @@ import { ActivityIndicator, Alert, BackHandler, Pressable, Share, StyleSheet, To
 import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
 import WebView, { type WebViewMessageEvent, type WebViewNavigation } from 'react-native-webview';
 
+import { PreviewModal, type Preview, type PreviewRow } from './src/PreviewModal';
 import { buildInjection, desktopViewportJs, diagnoseListJs, hostOf, parseBridgeMessage, remoteSetJs, syncAndBootJs } from './src/bridge';
 import { type CmpItem, type CompareState, CompareScreen } from './src/CompareScreen';
 import { parseGeneric, toXlsxBase64 } from './src/excel';
@@ -96,6 +97,7 @@ function Main() {
   const [script, setScript] = useState<{ source: string; version: string } | null>(null);
   const [update, setUpdate] = useState<Manifest | null>(null);
   const [busyText, setBusyText] = useState('');
+  const [preview, setPreview] = useState<Preview | null>(null);
 
   const [ops, setOpsState] = useState<Op[]>([]);
   const opsRef = useRef<Op[]>([]);
@@ -352,7 +354,7 @@ function Main() {
     if (upd.current && !send.current) return onUpdStatus(raw);
     const cur = send.current;
     if (!cur) return;
-    let st: { info?: string; saved?: boolean; ok?: number; miss?: string[]; dry?: boolean; summary?: { stage: string; room: string; place: string; city: string; gender: string; idNumber: string } };
+    let st: { info?: string; saved?: boolean; ok?: number; miss?: string[]; dry?: boolean; rows?: PreviewRow[]; summary?: { stage: string; room: string; place: string; city: string; gender: string; idNumber: string } };
     try {
       st = JSON.parse(raw);
     } catch {
@@ -377,25 +379,19 @@ function Main() {
         cur.d.reviewed ? 'عليه «تمت المراجعة» في موقعك' : '',
         ...cur.issues,
       ].filter(Boolean);
-      Alert.alert(
-        'إرسال إلى EMIS',
-        `${nm}\n\nسيُسجَّل في EMIS:\n` +
-          (sm ? `• الصف: ${sm.stage}${sm.room ? ' — الشعبة: ' + sm.room : ' — بدون شعبة'}\n• المكان: ${sm.place}${sm.city ? ' — المدينة: ' + sm.city : ''}\n• الجنس: ${sm.gender}\n• رقم الهوية: ${sm.idNumber}` : '') +
-          (warn.length ? `\n\n⚠ ${warn.join('\n⚠ ')}` : ''),
-        [
-          { text: 'إلغاء', style: 'cancel', onPress: endSend },
-          {
-            text: 'إرسال',
-            onPress: () => {
-              if (!send.current) return;
-              send.current.stage = 'send';
-              setBusyText(`إرسال ${nm} إلى EMIS...`);
-              emisCmd('api', cur.d);
-            },
-          },
-        ],
-        { cancelable: false },
-      );
+      const rows: PreviewRow[] =
+        st.rows ||
+        (sm
+          ? [
+              ['الصف', String(cur.d.grade || ''), sm.stage],
+              ['الشعبة', String(cur.d.section || ''), sm.room || 'بدون شعبة'],
+              ['المكان', '', sm.place],
+              ['المدينة', '', sm.city],
+              ['الجنس', String(cur.d.gender || ''), sm.gender],
+              ['رقم الهوية', '', sm.idNumber],
+            ]
+          : []);
+      setPreview({ name: nm, rows, warn });
       return;
     }
 
@@ -413,6 +409,19 @@ function Main() {
       logOp(cur.d, cur.id, cur.k, false, why);
       Alert.alert('لم يُسجَّل في EMIS', `${nm}\n\n${why}`);
     }
+  };
+
+  const previewCancel = () => {
+    setPreview(null);
+    endSend();
+  };
+  const previewSend = () => {
+    setPreview(null);
+    const cur = send.current;
+    if (!cur) return;
+    cur.stage = 'send';
+    setBusyText(`إرسال ${fullName(cur.d)} إلى EMIS...`);
+    emisCmd('api', cur.d);
   };
 
   /* ===================== المقارنة مع EMIS ===================== */
@@ -810,6 +819,8 @@ function Main() {
           </SafeAreaView>
         ) : null}
       </View>
+
+      <PreviewModal preview={preview} onCancel={previewCancel} onSend={previewSend} />
 
       <SettingsScreen
         visible={showSettings}
