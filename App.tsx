@@ -55,12 +55,6 @@ const K_MARKMANY = 'emis_markmany_v1';
 const K_MARK = 'emis_mark_v1';
 const K_SEND = 'emis_send_req_v1';
 const K_UPD = 'emis_upd_req_v1';
-const K_SENDMANY = 'emis_sendmany_req_v1';
-const K_BATCH_CMD = 'emis_batch_cmd_v1';
-const K_BATCH_RES = 'emis_batch_res_v1';
-const K_STOP = 'emis_stop_v1';
-type BItem = { id: number; k: string; d: StudentData; issues?: string[] };
-type BRes = { mode: 'check' | 'send'; running: boolean; done: number; total: number; results: { id: number; st: 'ready' | 'saved' | 'exists' | 'fail'; why?: string }[]; error?: string };
 // مفاتيح للتطبيق فقط: لا تُمرَّر بين الصفحتين
 const SITE_ONLY = new Set([K_DATA, K_CMD, 'emis_queue_v1', 'emis_sync_v1']);
 const DESKTOP_WIDTH = 1280;
@@ -109,9 +103,6 @@ function Main() {
   // إرسال طالب واحد من زر «إرسال إلى EMIS»: فحص ثم تأكيد ثم إرسال
   const send = useRef<{ stage: 'check' | 'send'; id: number; k: string; d: StudentData; issues: string[] } | null>(null);
   const sendTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const batch = useRef<{ mode: 'check' | 'send'; items: BItem[]; seen: Set<number> } | null>(null);
-  const batchTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const [batchRunning, setBatchRunning] = useState(false);
   const upd = useRef<{ id: number; k: string; d: StudentData } | null>(null);
   const updTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -295,7 +286,7 @@ function Main() {
       Alert.alert('إرسال إلى EMIS', p.error || 'تعذّرت قراءة الطالب');
       return;
     }
-    if (send.current || upd.current || batch.current) {
+    if (send.current || upd.current) {
       toast('انتظر حتى ينتهي الإرسال الحالي');
       return;
     }
@@ -317,7 +308,7 @@ function Main() {
       return;
     }
     if (!p.d) return;
-    if (send.current || upd.current || batch.current) {
+    if (send.current || upd.current) {
       toast('EMIS مشغول — عدّل هذا الطالب في EMIS لاحقاً');
       return;
     }
@@ -355,129 +346,6 @@ function Main() {
       logOp(cur.d, cur.id, cur.k, false, 'تعديل: ' + why);
       Alert.alert('لم يُعدَّل في EMIS', `${nm}\n\n${why}`);
     }
-  };
-
-  /* ===================== «إرسال المحدَّدين» من موقع الطلاب: فحص ← تأكيد واحد ← إرسال ===================== */
-  const endBatch = () => {
-    batch.current = null;
-    setBatchRunning(false);
-    setBusyText('');
-    if (batchTimer.current) clearTimeout(batchTimer.current);
-  };
-  const armBatchTimer = () => {
-    if (batchTimer.current) clearTimeout(batchTimer.current);
-    batchTimer.current = setTimeout(() => {
-      if (!batch.current) return;
-      const wasSend = batch.current.mode === 'send';
-      endBatch();
-      Alert.alert(
-        'EMIS لا يرد',
-        wasSend ? 'توقف الرد أثناء الإرسال. راجع سجل العمليات وتحقق في EMIS قبل إعادة الإرسال.' : 'سجّل الدخول في EMIS وافتح «إدارة الطلاب» ثم حاول مرة أخرى.',
-      );
-    }, 90000);
-  };
-  const batchCmd = (mode: 'check' | 'send', items: BItem[]) => {
-    batch.current = { mode, items, seen: new Set() };
-    setBatchRunning(true);
-    gmSet(K_BATCH_CMD, JSON.stringify({ mode, items: items.map(i => ({ id: i.id, k: i.k, d: { ...i.d, reviewed: false } })), t: Date.now() }), 'emis');
-    setBusyText(mode === 'check' ? `فحص ${items.length} طالب في EMIS...` : `إرسال 0 من ${items.length}...`);
-    armBatchTimer();
-  };
-  const markReviewed = (k: string, id: number) =>
-    siteRef.current?.injectJavaScript(`window.__emisMark&&window.__emisMark(${JSON.stringify(k)},${JSON.stringify(id)});true;`);
-  const onSendMany = (raw: string) => {
-    let p: { items?: BItem[]; error?: string };
-    try {
-      p = JSON.parse(raw);
-    } catch {
-      return;
-    }
-    if (p.error || !p.items?.length) return void Alert.alert('إرسال المحددين', p.error || 'لم تحدد أي طالب');
-    if (send.current || upd.current || batch.current) return void toast('انتظر حتى ينتهي الإرسال الحالي');
-    batchCmd('check', p.items);
-  };
-  const onBatchRes = (raw: string) => {
-    const b = batch.current;
-    if (!b) return;
-    let r: BRes;
-    try {
-      r = JSON.parse(raw);
-    } catch {
-      return;
-    }
-    if (r.mode !== b.mode) return;
-    armBatchTimer();
-    const byId = new Map(b.items.map(i => [i.id, i]));
-    const nameOf = (id: number) => (byId.get(id) ? fullName(byId.get(id)!.d) : String(id));
-    const fails = r.results.filter(x => x.st === 'fail').map(x => `• ${nameOf(x.id)}: ${x.why || 'سبب غير معروف'}`);
-    const exists = r.results.filter(x => x.st === 'exists');
-    if (b.mode === 'send') {
-      for (const x of r.results) {
-        if (b.seen.has(x.id)) continue;
-        b.seen.add(x.id);
-        const it = byId.get(x.id);
-        if (!it) continue;
-        if (x.st === 'saved') {
-          doneKeys.current.add(it.k);
-          markReviewed(it.k, it.id);
-          logOp(it.d, it.id, it.k, true, 'دفعة');
-          emisStale.current = true;
-        } else if (x.st === 'exists') markReviewed(it.k, it.id);
-        else if (x.st === 'fail') logOp(it.d, it.id, it.k, false, x.why || '');
-      }
-      if (r.running) return void setBusyText(`إرسال ${r.done} من ${r.total}...`);
-      endBatch();
-      AsyncStorage.setItem(K_DONE_APP, JSON.stringify([...doneKeys.current].slice(-5000))).catch(() => {});
-      const saved = r.results.filter(x => x.st === 'saved').length;
-      Alert.alert(
-        r.error ? 'توقف الإرسال' : 'انتهى الإرسال',
-        [
-          `✅ سُجّل في EMIS: ${saved}`,
-          exists.length ? `موجود مسبقاً: ${exists.length}` : '',
-          fails.length ? `✖ لم يُسجَّل: ${fails.length}` : '',
-          r.error ? `السبب: ${r.error}` : '',
-          r.done < r.total ? `لم يُرسَل بعد: ${r.total - r.done}` : '',
-          ...fails.slice(0, 12),
-        ]
-          .filter(Boolean)
-          .join('\n'),
-      );
-      return;
-    }
-    // الفحص
-    if (r.running) return void setBusyText(`فحص ${r.done} من ${r.total}...`);
-    endBatch();
-    if (r.error) return void Alert.alert('تعذّر الفحص', r.error);
-    const ready = r.results.filter(x => x.st === 'ready').map(x => byId.get(x.id)!).filter(Boolean);
-    const lines = [
-      `جاهز للإرسال: ${ready.length}`,
-      exists.length ? `موجود في EMIS (يُتخطّى ويُحدَّد عليه «تمت المراجعة»): ${exists.length}` : '',
-      fails.length ? `فيه نقص (يُتخطّى): ${fails.length}` : '',
-      ...fails.slice(0, 12),
-      ...(() => {
-        const ages = ready.flatMap(i => (i.issues || []).filter(x => x.startsWith('العمر')).map(x => `⚠ ${fullName(i.d)}: ${x}`));
-        return ages.length ? ['', `تنبيه العمر والصف (${ages.length}) — يُرسَلون، تحقق منهم:`, ...ages.slice(0, 10)] : [];
-      })(),
-    ]
-      .filter(Boolean)
-      .join('\n');
-    const markExisting = () => exists.forEach(x => byId.get(x.id) && markReviewed(byId.get(x.id)!.k, x.id));
-    if (!ready.length) {
-      return void Alert.alert('لا يوجد طالب جاهز للإرسال', lines, [
-        { text: 'حسناً', style: 'cancel' },
-        ...(exists.length ? [{ text: 'تحديد الموجودين', onPress: markExisting }] : []),
-      ]);
-    }
-    Alert.alert('إرسال المحدَّدين إلى EMIS', lines, [
-      { text: 'إلغاء', style: 'cancel' },
-      {
-        text: `إرسال ${ready.length}`,
-        onPress: () => {
-          markExisting();
-          batchCmd('send', ready);
-        },
-      },
-    ]);
   };
 
   const onEmisStatus = (raw: string) => {
@@ -718,7 +586,6 @@ function Main() {
             // طلب زر «إرسال إلى EMIS»: يتولاه التطبيق فقط (لا يُمرَّر لـ EMIS حتى لا يُسجَّل مرتين)
             if (m.k === K_SEND) return void (str && onSendRequest(str));
             if (m.k === K_UPD) return void (str && onUpdRequest(str));
-            if (m.k === K_SENDMANY) return void (str && onSendMany(str));
             if (m.k === K_CMP) return void (str && onCompareResult(str));
             if (m.k === K_MARKMANY) return void (str && onMarkManyProgress(str));
             if (m.k === K_MARK) {
@@ -737,7 +604,6 @@ function Main() {
             if (m.k === K_EXIST) return void (str && onEmisList(str));
             // نتيجة EMIS لا تُرسل لموقع الطلاب (حتى لا يحدد «تمت المراجعة» لطالب آخر مفتوح هناك)
             if (m.k === K_STATUS) return void (str && onEmisStatus(str));
-            if (m.k === K_BATCH_RES) return void (str && onBatchRes(str));
           }
           other?.injectJavaScript(remoteSetJs(m.k, v));
           return;
@@ -934,22 +800,12 @@ function Main() {
 
         {/* شريط صغير أثناء الفحص/الإرسال */}
         {busyText ? (
-          <SafeAreaView edges={['bottom']} style={styles.busyWrap} pointerEvents="box-none">
+          <SafeAreaView edges={['bottom']} style={styles.busyWrap} pointerEvents="none">
             <View style={styles.busy}>
               <ActivityIndicator color="#fff" size="small" />
               <T bold style={{ color: '#fff', fontSize: 13, flex: 1 }} numberOfLines={1}>
                 {busyText}
               </T>
-              {batchRunning ? (
-                <Pressable
-                  onPress={() => gmSet(K_STOP, JSON.stringify({ reason: 'user', t: Date.now() }), 'emis')}
-                  style={{ backgroundColor: colors.red, borderRadius: 10, paddingHorizontal: 12, paddingVertical: 5 }}
-                >
-                  <T bold style={{ color: '#fff', fontSize: 12 }}>
-                    إيقاف
-                  </T>
-                </Pressable>
-              ) : null}
             </View>
           </SafeAreaView>
         ) : null}
