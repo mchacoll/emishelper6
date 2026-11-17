@@ -126,6 +126,7 @@ function Main() {
   const views: Record<Pane, RefObject<WebView | null>> = { site: siteRef, emis: emisRef };
   const canBack = useRef<Record<Pane, boolean>>({ site: false, emis: false });
   const activeRef = useRef<Tab>('site');
+  const emisStale = useRef(false); // أُضيف طالب: حدّث صفحة EMIS عند فتحها ليظهر العدد الجديد
   activeRef.current = active;
   const settingsRef = useRef(settings);
   settingsRef.current = settings;
@@ -348,6 +349,7 @@ function Main() {
       AsyncStorage.setItem(K_DONE_APP, JSON.stringify([...doneKeys.current].slice(-5000))).catch(() => {});
       siteRef.current?.injectJavaScript(`window.__emisMark&&window.__emisMark(${JSON.stringify(cur.k)},${JSON.stringify(cur.id)});true;`);
       logOp(cur.d, cur.id, cur.k, true, '');
+      emisStale.current = true;
       toast(`✅ سُجّل ${nm} في EMIS`);
     } else {
       const why = miss.join('، ') || 'لم يُحفظ';
@@ -687,7 +689,13 @@ function Main() {
         <View style={styles.segment}>
           <Seg icon="school-outline" label="الطلاب" on={active === 'site' || (split && active !== 'excel')} onPress={() => setActive('site')} />
           <Seg icon="file-excel" label="Excel" on={active === 'excel'} onPress={() => setActive('excel')} />
-          <Seg icon="bank-outline" label="EMIS" on={active === 'emis' && !split} onPress={() => setActive('emis')} />
+          <Seg icon="bank-outline" label="EMIS" on={active === 'emis' && !split} onPress={() => {
+            if (emisStale.current) {
+              emisStale.current = false;
+              emisRef.current?.injectJavaScript('location.reload();true;');
+            }
+            setActive('emis');
+          }} />
         </View>
         <IconButton
           icon={split ? 'view-agenda-outline' : 'view-split-horizontal'}
