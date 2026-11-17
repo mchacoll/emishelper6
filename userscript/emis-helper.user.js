@@ -1,7 +1,7 @@
 // ==UserScript==
-// @name         مساعد EMIS – تعبئة تلقائية (v8.14.0)
+// @name         مساعد EMIS – تعبئة تلقائية (v8.14.1)
 // @namespace    emis-helper
-// @version      8.14.0
+// @version      8.14.1
 // @description  تعبئة تلقائية لـ EMIS + حفظ + «تمت المراجعة» + فتح «جديد» + نقل «الاحتياجات الخاصة» من EMIS إلى موقعك
 // @match        *://*/*
 // @grant        GM_setValue
@@ -316,7 +316,7 @@
     ui.dir = 'rtl';
 
     const head = mk('div', 'display:flex;justify-content:space-between;align-items:center;gap:8px');
-    head.appendChild(mk('b', 'font-size:13.5px;', title + ' v8.14.0'));
+    head.appendChild(mk('b', 'font-size:13.5px;', title + ' v8.14.1'));
     const minBtn = mk('button',
       'background:none;border:0;color:#fff;font-size:22px;' +
       'min-width:32px;min-height:32px;cursor:pointer;padding:0;line-height:1;', '−');
@@ -2680,11 +2680,10 @@
         if (!rec) throw new Error('not-found');
         let t = {};
         try { t = JSON.parse(rec.details || '{}'); } catch { /* ignore */ }
-        // (v8.13) emisSentAt: تاريخ التسجيل في EMIS — يعرضه الموقع لولي الأمر («سُجّل في EMIS»)
-        if (REVIEWED_VALUES.includes(String(t.reviewed ?? '').trim().toLowerCase()) && t.emisSentAt) return res('already');
+        if (REVIEWED_VALUES.includes(String(t.reviewed ?? '').trim().toLowerCase())) return res('already');
         await trpc('student.updateAdmin', {
           schoolId: rec.schoolId ?? me.id, id: rec.id, fullName: rec.fullName, grade: rec.grade, section: rec.section,
-          details: JSON.stringify({ ...t, reviewed: 'true', emisSentAt: t.emisSentAt || new Date().toISOString().slice(0, 10) }),
+          details: JSON.stringify({ ...t, reviewed: 'true' }),
         }, true);
         return res('ok');
       } catch (e) {
@@ -2744,7 +2743,7 @@
           try {
             await trpc('student.updateAdmin', {
               schoolId: rec.schoolId ?? me.id, id: rec.id, fullName: rec.fullName, grade: rec.grade, section: rec.section,
-              details: JSON.stringify({ ...t, reviewed: 'true', emisSentAt: t.emisSentAt || new Date().toISOString().slice(0, 10) }),
+              details: JSON.stringify({ ...t, reviewed: 'true' }),
             }, true);
             ok++;
           } catch (e) { if (e && e.isStop) throw e; failed.push(id); }
