@@ -19,6 +19,7 @@ export type Settings = {
   schools: SchoolRule[];
   onboarded: boolean;
   phoneV1: boolean; // (v8.5) انتقلنا لعرض EMIS بشكل الهاتف مرة واحدة
+  schoolsV3?: boolean; // (v8.27) أُضيفت مدرسة الوجدان
   schoolsV2?: boolean; // (v8.25) أُضيفت مدرسة التوحيد (حسب الاستمارة) مرة واحدة
   theme: 'auto' | 'light' | 'dark'; // (v8.24) المظهر: حسب الهاتف / نهاري / ليلي
   owner: boolean; // (v8.21) وضع المالك: نوافذ التحديث وزر «التحقق من التحديث» تظهر في هذا الهاتف فقط
@@ -28,6 +29,7 @@ export const DEFAULT_SCHOOLS: SchoolRule[] = [
   { key: 'ابن بطوطة', mode: 'form' },
   { key: 'ميثم التمار', mode: 'form' },
   { key: 'التوحيد', mode: 'form' },
+  { key: 'الوجدان', mode: 'form' },
   { key: '', mode: 'fixed', gov: 'ديالى', place: 'مركز قضاء خانقين', city: 'خانقين', lang: 'العربية' },
 ];
 

@@ -189,6 +189,14 @@ function Main() {
           loaded.schoolsV2 = true;
           AsyncStorage.setItem(K_SETTINGS, JSON.stringify(loaded)).catch(() => {});
         }
+        // (v8.27) مدرسة الوجدان: مثل التوحيد — مرة واحدة
+        if (!loaded.schoolsV3) {
+          const list = normalizedSchools(loaded.schools);
+          if (!list.some(r => r.key && r.key.includes('الوجدان'))) list.splice(list.length - 1, 0, { key: 'الوجدان', mode: 'form' });
+          loaded.schools = list;
+          loaded.schoolsV3 = true;
+          AsyncStorage.setItem(K_SETTINGS, JSON.stringify(loaded)).catch(() => {});
+        }
         setSettings(loaded);
         if (!loaded.onboarded) setShowGuide(true);
         if (st) store.current = JSON.parse(st) || {};
