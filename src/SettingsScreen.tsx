@@ -25,6 +25,8 @@ export function SettingsScreen(props: {
   onAudit: (source: 'site' | 'emis') => void;
   opsCount: number;
   onCheckUpdate: () => void;
+  owner: boolean;
+  onToggleOwner: () => void;
   versionText: string;
 }) {
   const [d, setD] = useState(props.settings);
@@ -166,10 +168,18 @@ export function SettingsScreen(props: {
             <Button kind="ghost" icon="help-circle-outline" label="طريقة الاستخدام" onPress={props.onShowGuide} compact />
           </Card>
 
-          <SectionTitle>التحديث</SectionTitle>
+          <SectionTitle>الإصدار</SectionTitle>
           <Card style={{ padding: 14, gap: 10 }}>
-            <T style={{ fontSize: 12, color: colors.muted }}>{props.versionText}</T>
-            <Button kind="soft" icon="cloud-download-outline" label="التحقق من التحديث" onPress={props.onCheckUpdate} compact />
+            {/* ضغطة مطوّلة 3 ثوانٍ على رقم الإصدار: تفعيل/إلغاء وضع المالك (التحديثات لهذا الهاتف فقط) */}
+            <Pressable onLongPress={props.onToggleOwner} delayLongPress={3000}>
+              <T style={{ fontSize: 12, color: colors.muted }}>
+                {props.versionText}
+                {props.owner ? '  · وضع المالك' : ''}
+              </T>
+            </Pressable>
+            {props.owner ? (
+              <Button kind="soft" icon="cloud-download-outline" label="التحقق من التحديث" onPress={props.onCheckUpdate} compact />
+            ) : null}
           </Card>
 
           <SectionTitle>البيانات</SectionTitle>

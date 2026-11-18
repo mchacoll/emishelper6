@@ -222,7 +222,9 @@ function Main() {
       return false;
     }
     lastCheck.current = Date.now();
-    if (m.versionCode > installedBuild()) {
+    // (v8.21) نوافذ التحديث تظهر لمالك التطبيق فقط (وضع المالك)؛ المستخدمون الآخرون لا يُزعَجون
+    const owner = settingsRef.current.owner;
+    if (m.versionCode > installedBuild() && (owner || manual)) {
       setUpdate(m);
       setPendingUpdate(m);
       return true;
@@ -230,6 +232,8 @@ function Main() {
     const ns = await updateScript(m, scriptRef.current?.version || '0');
     if (ns) {
       setScript(ns);
+      // غير المالك: السكربت يُحدَّث بصمت ويُطبَّق عند فتح الصفحات في المرة القادمة
+      if (!owner && !manual) return true;
       Alert.alert('تم تحديث السكربت', `السكربت الآن v${ns.version}. إعادة تحميل الصفحتين لتطبيقه؟`, [
         { text: 'لاحقاً', style: 'cancel' },
         { text: 'إعادة التحميل', onPress: () => setReloadKey(k => ({ site: k.site + 1, emis: k.emis + 1 })) },
@@ -999,6 +1003,14 @@ function Main() {
           setShowGuide(true);
         }}
         onCheckUpdate={() => checkUpdates(true)}
+        owner={!!settings.owner}
+        onToggleOwner={() => {
+          const owner = !settings.owner;
+          saveSettings({ ...settings, owner });
+          toast(owner ? 'وضع المالك مفعّل: تظهر لك التحديثات في هذا الهاتف' : 'أُلغي وضع المالك: لا تظهر نوافذ التحديث');
+          if (owner) setTimeout(() => checkUpdatesRef.current(true), 500);
+          else setPendingUpdate(null);
+        }}
         versionText={`التطبيق v${installedVersion()} (بناء ${installedBuild()}) · السكربت v${script?.version || '?'}`}
       />
 
