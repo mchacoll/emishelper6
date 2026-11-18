@@ -1,8 +1,8 @@
 import { useMemo, useState } from 'react';
-import { ActivityIndicator, FlatList, Modal, Pressable, StyleSheet, View } from 'react-native';
+import { ActivityIndicator, Alert, FlatList, Modal, Pressable, StyleSheet, TextInput, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
-import { colors, radius, ROW } from './theme';
+import { colors, fonts, radius, ROW } from './theme';
 import { Button, Icon, IconButton, T } from './ui';
 
 /** طالب في الكشف: هاتف أقل من 11 رقماً و/أو بطاقة موحدة أقل من 12 رقماً (من EMIS) */
@@ -48,8 +48,51 @@ export const auditToRows = (rows: AuditRow[]) => ({
   ]),
 });
 
-export function AuditScreen(props: { state: AuditState; onClose: () => void; onStop: () => void; onRestart: () => void; onExport: (rows: AuditRow[]) => void }) {
+const digits = (v: string) => v.replace(/[\u0660-\u0669]/g, x => String(x.charCodeAt(0) - 0x660)).replace(/[\u06F0-\u06F9]/g, x => String(x.charCodeAt(0) - 0x6f0)).replace(/\D/g, '');
+
+export function AuditScreen(props: {
+  state: AuditState;
+  onClose: () => void;
+  onStop: () => void;
+  onRestart: () => void;
+  onExport: (rows: AuditRow[]) => void;
+  fixing: number | null; // رقم الطالب الجاري تصحيحه
+  onFix: (row: AuditRow, phone: string, card: string) => void;
+}) {
   const s = props.state;
+  const [edit, setEdit] = useState<AuditRow | null>(null);
+  const [ph, setPh] = useState('');
+  const [cd, setCd] = useState('');
+  const openFix = (r: AuditRow) => {
+    setEdit(r);
+    setPh('');
+    setCd('');
+  };
+  const submitFix = () => {
+    if (!edit) return;
+    const p = digits(ph);
+    const c = digits(cd);
+    if (!p && !c) return void Alert.alert('تصحيح', 'اكتب الرقم الصحيح أولاً');
+    if (p && !/^07\d{9}$/.test(p)) return void Alert.alert('رقم الهاتف', 'يجب أن يكون 11 رقماً ويبدأ بـ 07');
+    if (c && c.length !== 12) return void Alert.alert('البطاقة الموحدة', 'يجب أن تكون 12 رقماً');
+    const where = s.source === 'site' ? 'موقع الطلاب' : 'EMIS الحقيقي';
+    Alert.alert(
+      'تأكيد التصحيح',
+      `${edit.name}\n\nسيُعدَّل في ${where}:` +
+        (p ? `\n• الهاتف: ${edit.phone || '—'} ← ${p}` : '') +
+        (c ? `\n• البطاقة الموحدة: ${edit.idNumber || '—'} ← ${c}` : ''),
+      [
+        { text: 'إلغاء', style: 'cancel' },
+        {
+          text: 'تصحيح',
+          onPress: () => {
+            props.onFix(edit, p, c);
+            setEdit(null);
+          },
+        },
+      ],
+    );
+  };
   const site = s.source === 'site';
   const [filter, setFilter] = useState<Filter>('all');
   const all = s.rows || [];
@@ -120,7 +163,7 @@ export function AuditScreen(props: { state: AuditState; onClose: () => void; onS
                   </View>
                 }
                 renderItem={({ item, index }) => (
-                  <View style={styles.item}>
+                  <View style={[styles.item, { alignItems: 'center' }]}>
                     <T bold style={{ width: 26, color: colors.muted, fontSize: 12 }}>
                       {index + 1}
                     </T>
@@ -138,6 +181,19 @@ export function AuditScreen(props: { state: AuditState; onClose: () => void; onS
                         </T>
                       ) : null}
                     </View>
+                    {item.badPhone || item.badCard ? (
+                      props.fixing === item.id ? (
+                        <ActivityIndicator color={colors.navy} />
+                      ) : (
+                        <Pressable onPress={() => openFix(item)} style={styles.fixBtn} disabled={props.fixing !== null}>
+                          <T bold style={{ fontSize: 12, color: colors.navy }}>
+                            تصحيح
+                          </T>
+                        </Pressable>
+                      )
+                    ) : (
+                      <Icon name="check-circle" size={22} color={colors.green} />
+                    )}
                   </View>
                 )}
               />
@@ -150,6 +206,36 @@ export function AuditScreen(props: { state: AuditState; onClose: () => void; onS
           ) : null}
         </View>
       </SafeAreaView>
+
+      {/* نافذة التصحيح */}
+      <Modal visible={!!edit} transparent animationType="fade" onRequestClose={() => setEdit(null)}>
+        <View style={styles.backdrop}>
+          {edit ? (
+            <View style={styles.sheet}>
+              <T bold style={{ fontSize: 16 }}>تصحيح — {s.source === 'site' ? 'موقع الطلاب' : 'EMIS'}</T>
+              <T style={{ fontSize: 13 }} numberOfLines={2}>
+                {edit.name}
+              </T>
+              {edit.badPhone ? (
+                <View style={{ gap: 4 }}>
+                  <T style={{ fontSize: 12, color: colors.muted }}>الهاتف الحالي: {edit.phone || '— فارغ'}</T>
+                  <TextInput style={styles.input} value={ph} onChangeText={setPh} placeholder="07XXXXXXXXX" placeholderTextColor={colors.muted} keyboardType="number-pad" maxLength={14} />
+                </View>
+              ) : null}
+              {edit.badCard ? (
+                <View style={{ gap: 4 }}>
+                  <T style={{ fontSize: 12, color: colors.muted }}>البطاقة الموحدة الحالية: {edit.idNumber || '— فارغة'}</T>
+                  <TextInput style={styles.input} value={cd} onChangeText={setCd} placeholder="12 رقماً" placeholderTextColor={colors.muted} keyboardType="number-pad" maxLength={16} />
+                </View>
+              ) : null}
+              <View style={[styles.row, { gap: 8 }]}>
+                <Button kind="soft" label="إلغاء" onPress={() => setEdit(null)} style={{ flex: 1 }} />
+                <Button kind="primary" icon="content-save" label="تصحيح" onPress={submitFix} style={{ flex: 2 }} />
+              </View>
+            </View>
+          ) : null}
+        </View>
+      </Modal>
     </Modal>
   );
 }
@@ -183,4 +269,19 @@ const styles = StyleSheet.create({
     backgroundColor: colors.card,
   },
   footer: { position: 'absolute', left: 0, right: 0, bottom: 0, padding: 12, backgroundColor: colors.bg },
+  fixBtn: { paddingHorizontal: 12, paddingVertical: 7, borderRadius: radius.sm, borderWidth: 1, borderColor: colors.navy, backgroundColor: colors.card },
+  backdrop: { flex: 1, backgroundColor: 'rgba(10,44,66,0.55)', justifyContent: 'center', padding: 22 },
+  sheet: { backgroundColor: colors.card, borderRadius: radius.lg, padding: 18, gap: 12 },
+  input: {
+    backgroundColor: colors.bg,
+    borderRadius: radius.sm,
+    borderWidth: 1,
+    borderColor: colors.border,
+    paddingHorizontal: 12,
+    paddingVertical: 9,
+    fontSize: 16,
+    color: colors.text,
+    textAlign: 'right',
+    fontFamily: fonts.regular,
+  },
 });

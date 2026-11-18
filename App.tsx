@@ -95,6 +95,8 @@ function Main() {
   const [showOps, setShowOps] = useState(false);
   const [audit, setAudit] = useState<AuditState>({ visible: false, running: false, source: 'emis', done: 0, total: 0 });
   const auditTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [fixing, setFixing] = useState<number | null>(null);
+  const fixTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [errors, setErrors] = useState<LogLine[]>([]);
   const [reloadKey, setReloadKey] = useState({ site: 0, emis: 0 });
   const [loading, setLoading] = useState<Record<Pane, boolean>>({ site: true, emis: true });
@@ -665,6 +667,12 @@ function Main() {
           return;
         case 'act': {
           if (m.ok) return;
+          if (m.action === 'fix:emis' || m.action === 'fix:site') {
+            if (fixTimer.current) clearTimeout(fixTimer.current);
+            setFixing(null);
+            Alert.alert('لم يُصحَّح', m.action === 'fix:site' ? 'افتح صفحة المنسق في موقع الطلاب' : 'افتح «إدارة الطلاب» في EMIS');
+            return;
+          }
           if (m.action === 'audit:emis' || m.action === 'audit:site') {
             if (auditTimer.current) clearTimeout(auditTimer.current);
             const why = m.action === 'audit:site' ? 'المساعد غير جاهز في موقع الطلاب — افتح صفحة المنسق' : 'المساعد غير جاهز في EMIS — سجّل الدخول وافتح «إدارة الطلاب»';
@@ -691,6 +699,7 @@ function Main() {
             // طلب زر «إرسال إلى EMIS»: يتولاه التطبيق فقط (لا يُمرَّر لـ EMIS حتى لا يُسجَّل مرتين)
             if (m.k === K_SEND) return void (str && onSendRequest(str));
             if (m.k === K_AUDIT) return void (str && onAudit(str));
+            if (m.k === 'emis_fix_v1') return void (str && onFixResult(str));
             if (m.k === K_UPD) return void (str && onUpdRequest(str));
             if (m.k === K_CMP) return void (str && onCompareResult(str));
             if (m.k === K_MARKMANY) return void (str && onMarkManyProgress(str));
@@ -708,6 +717,7 @@ function Main() {
           } else {
             if (m.k === K_GSTAT) return void (str && onGenericStatus(str));
             if (m.k === K_AUDIT) return void (str && onAudit(str));
+            if (m.k === 'emis_fix_v1') return void (str && onFixResult(str));
             if (m.k === K_EXIST) return void (str && onEmisList(str));
             // نتيجة EMIS لا تُرسل لموقع الطلاب (حتى لا يحدد «تمت المراجعة» لطالب آخر مفتوح هناك)
             if (m.k === K_STATUS) return void (str && onEmisStatus(str));
@@ -808,6 +818,41 @@ function Main() {
       else if (auditTimer.current) clearTimeout(auditTimer.current);
       return { ...a, ...r, running: !!r.running };
     });
+  };
+  const fixAudit = (row: AuditRow, phone: string, card: string) => {
+    setFixing(row.id);
+    const fn = audit.source === 'site' ? '__emisFixSite' : '__emisFixContact';
+    const pane: Pane = audit.source === 'site' ? 'site' : 'emis';
+    injectAct(pane, `!!window.${fn}&&window.${fn}(${row.id},${JSON.stringify(phone)},${JSON.stringify(card)})`, 'fix:' + pane);
+    if (fixTimer.current) clearTimeout(fixTimer.current);
+    fixTimer.current = setTimeout(() => {
+      setFixing(null);
+      toast('لم يصل رد — تحقق من التصحيح');
+    }, 45000);
+  };
+  const onFixResult = (raw: string) => {
+    let r: { id: number; ok: boolean; error?: string; phone?: string; card?: string };
+    try {
+      r = JSON.parse(raw);
+    } catch {
+      return;
+    }
+    if (fixTimer.current) clearTimeout(fixTimer.current);
+    setFixing(null);
+    if (!r.ok) return void Alert.alert('لم يُصحَّح', r.error || 'سبب غير معروف');
+    toast('✅ تم التصحيح');
+    setAudit(a => ({
+      ...a,
+      rows: (a.rows || []).map(x =>
+        x.id !== r.id
+          ? x
+          : {
+              ...x,
+              ...(r.phone ? { phone: r.phone, phoneLen: r.phone.length, badPhone: false } : {}),
+              ...(r.card ? { idNumber: r.card, idLen: r.card.length, badCard: false } : {}),
+            },
+      ),
+    }));
   };
   const exportAudit = async (rows: AuditRow[]) => {
     try {
@@ -1035,6 +1080,8 @@ function Main() {
         onStop={() => emisRef.current?.injectJavaScript('window.__emisAuditStop=true;true;')}
         onRestart={() => startAudit(audit.source)}
         onExport={exportAudit}
+        fixing={fixing}
+        onFix={fixAudit}
       />
       <UpdateModal manifest={update} onClose={() => setUpdate(null)} />
       <CompareScreen

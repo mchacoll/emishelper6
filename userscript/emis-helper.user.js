@@ -1,7 +1,7 @@
 // ==UserScript==
-// @name         مساعد EMIS – تعبئة تلقائية (v8.20.0)
+// @name         مساعد EMIS – تعبئة تلقائية (v8.22.0)
 // @namespace    emis-helper
-// @version      8.20.0
+// @version      8.22.0
 // @description  تعبئة تلقائية لـ EMIS + حفظ + «تمت المراجعة» + فتح «جديد» + نقل «الاحتياجات الخاصة» من EMIS إلى موقعك
 // @match        *://*/*
 // @grant        GM_setValue
@@ -316,7 +316,7 @@
     ui.dir = 'rtl';
 
     const head = mk('div', 'display:flex;justify-content:space-between;align-items:center;gap:8px');
-    head.appendChild(mk('b', 'font-size:13.5px;', title + ' v8.20.0'));
+    head.appendChild(mk('b', 'font-size:13.5px;', title + ' v8.22.0'));
     const minBtn = mk('button',
       'background:none;border:0;color:#fff;font-size:22px;' +
       'min-width:32px;min-height:32px;cursor:pointer;padding:0;line-height:1;', '−');
@@ -2791,6 +2791,26 @@
       }
     }
     window.__emisAuditSite = () => { auditSiteApi(); return true; };
+    // (v8.22) تصحيح الهاتف / البطاقة الموحدة في استمارة موقع الطلاب
+    async function fixSiteApi(id, phone, card) {
+      const res = o => gmSet('emis_fix_v1', JSON.stringify({ source: 'site', id, ...o, t: Date.now() }));
+      try {
+        const me = await trpc('school.me');
+        const list = await trpc('student.listForSchool', { schoolSlug: me.slug });
+        const rec = (list || []).find(x => x && x.id === id);
+        if (!rec) throw new Error('لم أجد الطالب في قائمة المدرسة');
+        let t = {};
+        try { t = JSON.parse(rec.details || '{}'); } catch { /* ignore */ }
+        if (phone) t.phone = phone;
+        if (card) t.unifiedCardNumber = card;
+        await trpc('student.updateAdmin', {
+          schoolId: rec.schoolId ?? me.id, id: rec.id, fullName: rec.fullName, grade: rec.grade, section: rec.section,
+          details: JSON.stringify(t),
+        }, true);
+        res({ ok: true, phone, card });
+      } catch (e) { res({ ok: false, error: (e && e.message) || String(e) }); }
+    }
+    window.__emisFixSite = (id, phone, card) => { fixSiteApi(Number(id), phone || '', card || ''); return true; };
 
     /* ---------- (v8.3) زر «إرسال إلى EMIS» في موقع الطلاب ----------
        الزر في الموقع علامة فقط (data-action="send-to-emis")، والمساعد هو من يقرأ الطالب
@@ -3362,6 +3382,31 @@
       }
     }
     window.__emisAudit = () => { auditApi(); return true; };
+
+    /* (v8.22) تصحيح الهاتف / البطاقة الموحدة لطالب واحد من الكشف (بعد تأكيد المستخدم في التطبيق) */
+    async function fixContactApi(id, phone, card) {
+      const res = o => gmSet('emis_fix_v1', JSON.stringify({ source: 'emis', id, ...o, t: Date.now() }));
+      try {
+        const cur = unwrap(await emisApi('/student/getstudent/' + id));
+        if (!cur || !cur.id) throw new Error('تعذّرت قراءة الطالب من EMIS');
+        const dOnly = v => { const m = String(v || '').match(/^(\d{4})-(\d{1,2})-(\d{1,2})/); return m ? m[1] + '-' + m[2].padStart(2, '0') + '-' + m[3].padStart(2, '0') : null; };
+        const out = { ...cur, dateOfBirth: dOnly(cur.dateOfBirth), identification: { ...(cur.identification || {}) } };
+        out.identification.issuingDate = dOnly(out.identification.issuingDate);
+        if (out.fatherIdentification && out.fatherIdentification.issuingDate) out.fatherIdentification = { ...out.fatherIdentification, issuingDate: dOnly(out.fatherIdentification.issuingDate) };
+        if (phone) { out.homePhoneNumber = phone; if (out.address) out.address = { ...out.address, homePhoneNumber: out.address.homePhoneNumber ? phone : out.address.homePhoneNumber }; }
+        if (card) {
+          if (String(out.identification.idNumber || '') !== card) {
+            const chk = await emisApi('/student/checknationalidnumber?value=' + encodeURIComponent(card));
+            if (chk && chk.isUnique === false) throw new Error('رقم البطاقة ' + card + ' مستخدم مسبقاً في EMIS');
+          }
+          out.identification.idNumber = card;
+          out.identification.idType = 12;
+        }
+        await emisApi('/student/updatestudent', out);
+        res({ ok: true, phone, card });
+      } catch (e) { res({ ok: false, error: (e && e.message) || String(e) }); }
+    }
+    window.__emisFixContact = (id, phone, card) => { fixContactApi(Number(id), phone || '', card || ''); return true; };
 
     const api = createBar('مساعد EMIS',
       ui => guarded(ui, async () => {
