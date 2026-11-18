@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { ActivityIndicator, FlatList, KeyboardAvoidingView, Modal, Pressable, StyleSheet, TextInput, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
-import { type AppActions, explainError, getApiKey, providerOf, runCommand, setApiKey } from './agent';
+import { type AppActions, explainError, getApiKey, isClaudeKey, runCommand, setApiKey } from './agent';
 import { colors, fonts, radius, ROW } from './theme';
 import { Button, Icon, IconButton, T } from './ui';
 
@@ -32,6 +32,7 @@ export function CommandScreen(props: { visible: boolean; onClose: () => void; ac
   const [key, setKey] = useState<string | null>(null);
   const [keyDraft, setKeyDraft] = useState('');
   const [editKey, setEditKey] = useState(false);
+  const [keyErr, setKeyErr] = useState('');
   const [lines, setLines] = useState<Line[]>([]);
   const [input, setInput] = useState('');
   const [busy, setBusy] = useState(false);
@@ -44,7 +45,13 @@ export function CommandScreen(props: { visible: boolean; onClose: () => void; ac
       setPin('');
       return;
     }
-    getApiKey().then(k => setKey(k));
+    getApiKey().then(k => {
+      // مفتاح Google قديم من نسخة سابقة: يُحذف ولا يُستخدم
+      if (k && !isClaudeKey(k)) {
+        setApiKey('').catch(() => {});
+        setKey(null);
+      } else setKey(k);
+    });
   }, [props.visible]);
 
   const add = (l: Line) => setLines(x => [...x, l]);
@@ -69,11 +76,12 @@ export function CommandScreen(props: { visible: boolean; onClose: () => void; ac
   const saveKey = async () => {
     const k = keyDraft.trim();
     if (!k) return;
-    await setApiKey(k);
-    if (!key || providerOf(key) !== providerOf(k)) {
-      history.current = [];
-      setLines([]);
+    if (!isClaudeKey(k)) {
+      setKeyErr('هذا ليس مفتاح Claude — المفتاح يبدأ بـ sk-ant-');
+      return;
     }
+    setKeyErr('');
+    await setApiKey(k);
     setKey(k);
     setKeyDraft('');
     setEditKey(false);
@@ -85,7 +93,7 @@ export function CommandScreen(props: { visible: boolean; onClose: () => void; ac
         <View style={styles.head}>
           <IconButton icon="close" onPress={props.onClose} accessibilityLabel="إغلاق" />
           <T bold style={{ color: '#fff', fontSize: 17, flex: 1 }}>
-            مساعد الأوامر{unlocked && key ? (providerOf(key) === 'gemini' ? ' · Gemini' : ' · Claude') : ''}
+            مساعد الأوامر
           </T>
           {unlocked && key ? (
             <>
@@ -125,11 +133,10 @@ export function CommandScreen(props: { visible: boolean; onClose: () => void; ac
           ) : !key || editKey ? (
             <View style={styles.center}>
               <Icon name="key-variant" size={40} color={colors.navy} />
-              <T bold style={{ fontSize: 16, textAlign: 'center' }}>مفتاح الذكاء الاصطناعي</T>
+              <T bold style={{ fontSize: 16, textAlign: 'center' }}>مفتاح Claude API</T>
               <T style={{ fontSize: 12, color: colors.muted, textAlign: 'center', lineHeight: 20 }}>
-                مجاني: Google Gemini — من aistudio.google.com ← Get API key.{'\n'}
-                مدفوع: Claude — من console.anthropic.com ← API Keys (يبدأ بـ sk-ant-).{'\n'}
-                يعرف التطبيق النوع من المفتاح نفسه، ويحفظه مشفّراً في هذا الهاتف فقط.
+                من console.anthropic.com ← API Keys (يبدأ بـ sk-ant-).{'\n'}
+                يُحفظ مشفّراً في هذا الهاتف فقط، وAnthropic لا تستخدم بيانات الـ API لتدريب نماذجها.
               </T>
               <TextInput
                 style={[styles.input, { alignSelf: 'stretch' }]}
@@ -141,6 +148,7 @@ export function CommandScreen(props: { visible: boolean; onClose: () => void; ac
                 autoCorrect={false}
                 secureTextEntry
               />
+              {keyErr ? <T style={{ color: colors.red, fontSize: 12 }}>{keyErr}</T> : null}
               <Button kind="primary" icon="content-save" label="حفظ المفتاح" onPress={saveKey} style={{ alignSelf: 'stretch' }} />
               {key ? (
                 <Button

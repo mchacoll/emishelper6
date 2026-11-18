@@ -121,11 +121,10 @@ const textOf = (m: Anthropic.Beta.BetaMessage) =>
     .join('\n')
     .trim();
 
-export type Provider = 'claude' | 'gemini';
-// مفاتيح Claude تبدأ بـ sk-ant-؛ أي مفتاح آخر نعامله كمفتاح Google (AIza... أو الشكل الجديد AQ....)
-export const providerOf = (key: string): Provider => (key.trim().startsWith('sk-ant-') ? 'claude' : 'gemini');
+/** مفتاح Claude فقط (حُذف Gemini المجاني: شروطه تسمح باستخدام البيانات المرسلة) */
+export const isClaudeKey = (key: string) => key.trim().startsWith('sk-ant-');
 
-/** يرسل الأمر ويشغّل الأدوات حتى ينتهي، ويعيد الرد والمحادثة الجديدة (Claude أو Gemini حسب نوع المفتاح) */
+/** يرسل الأمر ويشغّل الأدوات حتى ينتهي، ويعيد الرد والمحادثة الجديدة */
 export async function runCommand(
   apiKey: string,
   history: unknown[],
@@ -134,7 +133,6 @@ export async function runCommand(
   onTool: (name: string) => void,
 ): Promise<{ reply: string; history: unknown[] }> {
   const specs = makeSpecs(actions);
-  if (providerOf(apiKey) === 'gemini') return runGemini(apiKey, history, command, specs, onTool);
 
   const client = new Anthropic({ apiKey, maxRetries: 2, timeout: 120_000 });
   const runner = client.beta.messages.toolRunner({
@@ -158,81 +156,8 @@ export async function runCommand(
   return { reply: reply || 'تم.', history: msgs.slice(-40) };
 }
 
-/* ---------- Google Gemini (مجاني ضمن حدود يومية) ---------- */
-const GEMINI_MODEL = 'gemini-flash-latest';
-type GPart = { text?: string; thought?: boolean; functionCall?: { name: string; args?: Record<string, unknown> }; functionResponse?: unknown };
-type GContent = { role: 'user' | 'model'; parts: GPart[] };
-
-export class GeminiError extends Error {
-  constructor(public status: number, message: string) {
-    super(message);
-  }
-}
-
-const gSchema = (sp: Spec) =>
-  sp.props
-    ? {
-        type: 'OBJECT',
-        properties: Object.fromEntries(
-          Object.entries(sp.props).map(([k, v]) => [k, { type: v.type.toUpperCase(), ...(v.enum ? { enum: v.enum } : {}), ...(v.description ? { description: v.description } : {}) }]),
-        ),
-        required: sp.required || [],
-      }
-    : undefined;
-
-async function runGemini(key: string, history: unknown[], command: string, specs: Spec[], onTool: (n: string) => void) {
-  const contents: GContent[] = [...(history as GContent[]), { role: 'user', parts: [{ text: command }] }];
-  const tools = [{ functionDeclarations: specs.map(sp => ({ name: sp.name, description: sp.description, ...(sp.props ? { parameters: gSchema(sp) } : {}) })) }];
-  for (let step = 0; step < 12; step++) {
-    const ctl = new AbortController();
-    const timer = setTimeout(() => ctl.abort(), 90_000);
-    let res: Response;
-    try {
-      res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'x-goog-api-key': key.trim() },
-        body: JSON.stringify({ systemInstruction: { parts: [{ text: SYSTEM }] }, contents, tools }),
-        signal: ctl.signal,
-      });
-    } catch {
-      throw new GeminiError(0, 'network');
-    } finally {
-      clearTimeout(timer);
-    }
-    const j = await res.json().catch(() => null);
-    if (!res.ok) throw new GeminiError(res.status, (j && j.error && j.error.message) || 'HTTP ' + res.status);
-    const cand = j && j.candidates && j.candidates[0];
-    const content: GContent | undefined = cand && cand.content;
-    if (!content || !Array.isArray(content.parts)) {
-      const why = (j && j.promptFeedback && j.promptFeedback.blockReason) || (cand && cand.finishReason) || 'رد فارغ';
-      return { reply: 'لم يُنفَّذ الأمر (' + why + ').', history: contents.slice(-40) };
-    }
-    contents.push({ role: 'model', parts: content.parts });
-    const calls = content.parts.filter(p => p.functionCall);
-    if (!calls.length) {
-      const reply = content.parts.filter(p => p.text && !p.thought).map(p => p.text).join('\n').trim();
-      return { reply: reply || 'تم.', history: contents.slice(-40) };
-    }
-    const out: GPart[] = [];
-    for (const c of calls) {
-      const sp = specs.find(x => x.name === c.functionCall!.name);
-      const result = sp ? await safeRun(sp, c.functionCall!.args || {}, onTool) : 'أداة غير معروفة';
-      out.push({ functionResponse: { name: c.functionCall!.name, response: { result } } });
-    }
-    contents.push({ role: 'user', parts: out });
-  }
-  return { reply: 'توقفت بعد خطوات كثيرة — جرّب أمراً أبسط.', history: contents.slice(-40) };
-}
-
 /** رسالة خطأ مفهومة */
 export function explainError(e: unknown): string {
-  if (e instanceof GeminiError) {
-    if (e.status === 0) return 'لا يوجد اتصال بالإنترنت.';
-    if (e.status === 429) return 'انتهى الحد المجاني المسموح الآن من Google — انتظر دقيقة، أو حتى الغد إن كان الحد اليومي.';
-    if (e.status === 400 && /API key/i.test(e.message)) return 'مفتاح Gemini غير صحيح — غيّره من زر المفتاح.';
-    if (e.status === 403) return 'المفتاح لا يملك صلاحية، أو الخدمة غير متاحة في بلدك.';
-    return `خطأ من Google (${e.status}): ${e.message}`;
-  }
   if (e instanceof Anthropic.AuthenticationError) return 'مفتاح API غير صحيح — غيّره من زر المفتاح.';
   if (e instanceof Anthropic.PermissionDeniedError) return 'المفتاح لا يملك صلاحية لهذا النموذج.';
   if (e instanceof Anthropic.RateLimitError) return 'طلبات كثيرة أو رصيد غير كافٍ — حاول بعد قليل.';
