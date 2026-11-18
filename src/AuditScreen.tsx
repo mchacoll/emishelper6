@@ -21,6 +21,7 @@ export type AuditRow = {
 export type AuditState = {
   visible: boolean;
   running: boolean;
+  source: 'site' | 'emis';
   done: number;
   total: number;
   rows?: AuditRow[];
@@ -49,6 +50,7 @@ export const auditToRows = (rows: AuditRow[]) => ({
 
 export function AuditScreen(props: { state: AuditState; onClose: () => void; onStop: () => void; onRestart: () => void; onExport: (rows: AuditRow[]) => void }) {
   const s = props.state;
+  const site = s.source === 'site';
   const [filter, setFilter] = useState<Filter>('all');
   const all = s.rows || [];
   const phoneN = all.filter(r => r.badPhone).length;
@@ -60,9 +62,12 @@ export function AuditScreen(props: { state: AuditState; onClose: () => void; onS
       <SafeAreaView style={{ flex: 1, backgroundColor: colors.navy }} edges={['top', 'bottom']}>
         <View style={styles.head}>
           <IconButton icon="close" onPress={props.onClose} accessibilityLabel="إغلاق" />
-          <T bold style={{ color: '#fff', fontSize: 17, flex: 1 }}>
-            كشف الهاتف والبطاقة الموحدة
-          </T>
+          <View style={{ flex: 1 }}>
+            <T bold style={{ color: '#fff', fontSize: 17 }}>
+              كشف الهاتف والبطاقة الموحدة
+            </T>
+            <T style={{ color: 'rgba(255,255,255,0.75)', fontSize: 12 }}>{site ? 'موقع الطلاب' : 'EMIS'}</T>
+          </View>
           {!s.running && s.rows ? <IconButton icon="refresh" onPress={props.onRestart} accessibilityLabel="فحص من جديد" /> : null}
         </View>
 
@@ -71,27 +76,29 @@ export function AuditScreen(props: { state: AuditState; onClose: () => void; onS
             <View style={styles.center}>
               {s.running ? <ActivityIndicator size="large" color={colors.navy} /> : <Icon name="alert-circle" size={42} color={colors.red} />}
               <T bold style={{ fontSize: 15, textAlign: 'center', color: s.error ? colors.red : colors.text }}>
-                {s.error || (s.total ? `فحص سجلات الطلاب في EMIS... ${s.done} من ${s.total}` : 'قراءة قائمة الطلاب من EMIS...')}
+                {s.error || (site ? 'قراءة استمارات موقع الطلاب...' : s.total ? `فحص سجلات الطلاب في EMIS... ${s.done} من ${s.total}` : 'قراءة قائمة الطلاب من EMIS...')}
               </T>
               {s.running ? (
                 <>
                   <View style={styles.bar}>
                     <View style={[styles.barFill, { width: `${s.total ? Math.round((100 * s.done) / s.total) : 3}%` }]} />
                   </View>
-                  <Button kind="danger" icon="stop" label="إيقاف" onPress={props.onStop} compact />
+                  {!site ? <Button kind="danger" icon="stop" label="إيقاف" onPress={props.onStop} compact /> : null}
                 </>
               ) : (
                 <Button kind="primary" icon="refresh" label="إعادة المحاولة" onPress={props.onRestart} />
               )}
               <T style={{ fontSize: 12, color: colors.muted, textAlign: 'center', lineHeight: 19 }}>
-                يقرأ سجل كل طالب من EMIS (قراءة فقط، لا يُعدَّل شيء). يجب أن تكون «إدارة الطلاب» مفتوحة في EMIS.
+                {site
+                  ? 'يقرأ استمارات موقع الطلاب (قراءة فقط، لا يُعدَّل شيء). يجب أن تكون صفحة المنسق مفتوحة في موقع الطلاب.'
+                  : 'يقرأ سجل كل طالب من EMIS (قراءة فقط، لا يُعدَّل شيء). يجب أن تكون «إدارة الطلاب» مفتوحة في EMIS.'}
               </T>
             </View>
           ) : s.rows ? (
             <>
               <View style={styles.summary}>
                 <T style={{ fontSize: 12, color: colors.muted }}>
-                  فُحص {s.done} من {s.total} طالب{s.failed ? ` · تعذّرت قراءة ${s.failed}` : ''}
+                  {site ? 'موقع الطلاب: ' : 'EMIS: '}فُحص {s.done} من {s.total} طالب{s.failed ? ` · تعذّرت قراءة ${s.failed}` : ''}
                   {s.stopped ? ' · أُوقف قبل النهاية' : ''}
                 </T>
                 <View style={[styles.row, { gap: 6 }]}>

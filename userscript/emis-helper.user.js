@@ -1,7 +1,7 @@
 // ==UserScript==
-// @name         مساعد EMIS – تعبئة تلقائية (v8.18.0)
+// @name         مساعد EMIS – تعبئة تلقائية (v8.20.0)
 // @namespace    emis-helper
-// @version      8.18.0
+// @version      8.20.0
 // @description  تعبئة تلقائية لـ EMIS + حفظ + «تمت المراجعة» + فتح «جديد» + نقل «الاحتياجات الخاصة» من EMIS إلى موقعك
 // @match        *://*/*
 // @grant        GM_setValue
@@ -316,7 +316,7 @@
     ui.dir = 'rtl';
 
     const head = mk('div', 'display:flex;justify-content:space-between;align-items:center;gap:8px');
-    head.appendChild(mk('b', 'font-size:13.5px;', title + ' v8.18.0'));
+    head.appendChild(mk('b', 'font-size:13.5px;', title + ' v8.20.0'));
     const minBtn = mk('button',
       'background:none;border:0;color:#fff;font-size:22px;' +
       'min-width:32px;min-height:32px;cursor:pointer;padding:0;line-height:1;', '−');
@@ -2757,6 +2757,41 @@
     }
     window.__emisCompare = exist => { compareApi(exist); };
 
+    /* (v8.20) كشف موقع الطلاب: رقم هاتف أقل من 11 رقماً، ورقم البطاقة الموحدة أقل من 12 رقماً
+       (الطلاب بهوية الأحوال المدنية القديمة لا يُفحص رقم هويتهم) — قراءة فقط */
+    async function auditSiteApi() {
+      const out = o => gmSet('emis_audit_v1', JSON.stringify({ source: 'site', ...o, t: Date.now() }));
+      try {
+        out({ running: true, done: 0, total: 0 });
+        const me = await trpc('school.me');
+        if (!me || !me.slug) throw new Error('سجّل دخول المنسق في موقع الطلاب');
+        const list = (await trpc('student.listForSchool', { schoolSlug: me.slug })) || [];
+        const dg = v => String(v ?? '').replace(/[\u0660-\u0669]/g, x => x.charCodeAt(0) - 0x660)
+          .replace(/[\u06F0-\u06F9]/g, x => x.charCodeAt(0) - 0x6F0).replace(/\D/g, '');
+        const rows = [];
+        for (const rec of list) {
+          if (!rec || typeof rec !== 'object') continue;
+          const d = recordToData(rec, me.name);
+          const pd = dg(d.phone), civil = isCivil(d), idd = dg(d.nationalId);
+          const badPhone = pd.length < 11;
+          const badCard = !civil && idd.length < 12;
+          if (badPhone || badCard) {
+            rows.push({
+              id: rec.id,
+              name: [d.name, d.father, d.grandfather, d.greatGrandfather, d.surname !== d.greatGrandfather ? d.surname : ''].filter(Boolean).join(' '),
+              stage: d.grade || '', room: d.section || '',
+              phone: d.phone || '', phoneLen: pd.length, badPhone,
+              idNumber: civil ? '' : (d.nationalId || ''), idLen: idd.length, badCard,
+            });
+          }
+        }
+        out({ running: false, done: list.length, total: list.length, failed: 0, rows });
+      } catch (e) {
+        out({ running: false, error: (e && e.message) || String(e) });
+      }
+    }
+    window.__emisAuditSite = () => { auditSiteApi(); return true; };
+
     /* ---------- (v8.3) زر «إرسال إلى EMIS» في موقع الطلاب ----------
        الزر في الموقع علامة فقط (data-action="send-to-emis")، والمساعد هو من يقرأ الطالب
        ويطلب تسجيله مباشرة في EMIS (التطبيق، أو تبويب EMIS على الحاسبة) */
@@ -3267,7 +3302,7 @@
       if (auditBusy) return;
       auditBusy = true;
       window.__emisAuditStop = false;
-      const out = o => gmSet(K_AUDIT, JSON.stringify({ ...o, t: Date.now() }));
+      const out = o => gmSet(K_AUDIT, JSON.stringify({ source: 'emis', ...o, t: Date.now() }));
       try {
         const sm = location.pathname.match(/schools\/(\d+)/);
         if (!sm) throw new Error('افتح «إدارة الطلاب» للمدرسة في EMIS أولاً');

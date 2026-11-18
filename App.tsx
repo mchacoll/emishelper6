@@ -93,7 +93,7 @@ function Main() {
   const [showSettings, setShowSettings] = useState(false);
   const [showGuide, setShowGuide] = useState(false);
   const [showOps, setShowOps] = useState(false);
-  const [audit, setAudit] = useState<AuditState>({ visible: false, running: false, done: 0, total: 0 });
+  const [audit, setAudit] = useState<AuditState>({ visible: false, running: false, source: 'emis', done: 0, total: 0 });
   const auditTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [errors, setErrors] = useState<LogLine[]>([]);
   const [reloadKey, setReloadKey] = useState({ site: 0, emis: 0 });
@@ -661,9 +661,10 @@ function Main() {
           return;
         case 'act': {
           if (m.ok) return;
-          if (m.action === 'audit:emis') {
+          if (m.action === 'audit:emis' || m.action === 'audit:site') {
             if (auditTimer.current) clearTimeout(auditTimer.current);
-            setAudit(a => ({ ...a, running: false, error: 'المساعد غير جاهز في EMIS — سجّل الدخول وافتح «إدارة الطلاب»' }));
+            const why = m.action === 'audit:site' ? 'المساعد غير جاهز في موقع الطلاب — افتح صفحة المنسق' : 'المساعد غير جاهز في EMIS — سجّل الدخول وافتح «إدارة الطلاب»';
+            setAudit(a => ({ ...a, running: false, error: why }));
             return;
           }
           if (m.action === 'cmp-list:emis') compareFail('المساعد غير جاهز في EMIS — سجّل الدخول وافتح «إدارة الطلاب»');
@@ -685,6 +686,7 @@ function Main() {
           if (pane === 'site') {
             // طلب زر «إرسال إلى EMIS»: يتولاه التطبيق فقط (لا يُمرَّر لـ EMIS حتى لا يُسجَّل مرتين)
             if (m.k === K_SEND) return void (str && onSendRequest(str));
+            if (m.k === K_AUDIT) return void (str && onAudit(str));
             if (m.k === K_UPD) return void (str && onUpdRequest(str));
             if (m.k === K_CMP) return void (str && onCompareResult(str));
             if (m.k === K_MARKMANY) return void (str && onMarkManyProgress(str));
@@ -783,10 +785,11 @@ function Main() {
       setAudit(a => (a.running ? { ...a, running: false, error: 'EMIS لا يرد — سجّل الدخول وافتح «إدارة الطلاب» ثم أعد المحاولة' } : a));
     }, 60000);
   };
-  const startAudit = () => {
-    setAudit({ visible: true, running: true, done: 0, total: 0 });
+  const startAudit = (source: 'site' | 'emis') => {
+    setAudit({ visible: true, running: true, source, done: 0, total: 0 });
     armAuditTimer();
-    injectAct('emis', '!!window.__emisAudit&&window.__emisAudit()', 'audit:emis');
+    if (source === 'site') injectAct('site', '!!window.__emisAuditSite&&window.__emisAuditSite()', 'audit:site');
+    else injectAct('emis', '!!window.__emisAudit&&window.__emisAudit()', 'audit:emis');
   };
   const onAudit = (raw: string) => {
     let r: Omit<AuditState, 'visible'>;
@@ -795,14 +798,17 @@ function Main() {
     } catch {
       return;
     }
-    if (r.running) armAuditTimer();
-    else if (auditTimer.current) clearTimeout(auditTimer.current);
-    setAudit(a => ({ ...a, ...r, running: !!r.running }));
+    setAudit(a => {
+      if (r.source && r.source !== a.source) return a; // نتيجة الكشف الآخر
+      if (r.running) armAuditTimer();
+      else if (auditTimer.current) clearTimeout(auditTimer.current);
+      return { ...a, ...r, running: !!r.running };
+    });
   };
   const exportAudit = async (rows: AuditRow[]) => {
     try {
       const { headers, rows: data } = auditToRows(rows);
-      const uri = (FileSystem.cacheDirectory || '') + 'emis-phone-card.xlsx';
+      const uri = (FileSystem.cacheDirectory || '') + (audit.source === 'site' ? 'site-phone-card.xlsx' : 'emis-phone-card.xlsx');
       await FileSystem.writeAsStringAsync(uri, toXlsxBase64(headers, data, 'الكشف'), { encoding: FileSystem.EncodingType.Base64 });
       await Sharing.shareAsync(uri, { mimeType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', dialogTitle: 'كشف الهاتف والبطاقة' });
     } catch (e) {
@@ -977,9 +983,9 @@ function Main() {
           setShowSettings(false);
           setShowOps(true);
         }}
-        onAudit={() => {
+        onAudit={src => {
           setShowSettings(false);
-          startAudit();
+          startAudit(src);
         }}
         opsCount={ops.length}
         onDiagnose={() => {
@@ -1015,7 +1021,7 @@ function Main() {
           setAudit(a => ({ ...a, visible: false, running: false }));
         }}
         onStop={() => emisRef.current?.injectJavaScript('window.__emisAuditStop=true;true;')}
-        onRestart={startAudit}
+        onRestart={() => startAudit(audit.source)}
         onExport={exportAudit}
       />
       <UpdateModal manifest={update} onClose={() => setUpdate(null)} />
