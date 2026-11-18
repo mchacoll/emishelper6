@@ -1,7 +1,7 @@
 // ==UserScript==
-// @name         مساعد EMIS – تعبئة تلقائية (v8.17.0)
+// @name         مساعد EMIS – تعبئة تلقائية (v8.18.0)
 // @namespace    emis-helper
-// @version      8.17.0
+// @version      8.18.0
 // @description  تعبئة تلقائية لـ EMIS + حفظ + «تمت المراجعة» + فتح «جديد» + نقل «الاحتياجات الخاصة» من EMIS إلى موقعك
 // @match        *://*/*
 // @grant        GM_setValue
@@ -316,7 +316,7 @@
     ui.dir = 'rtl';
 
     const head = mk('div', 'display:flex;justify-content:space-between;align-items:center;gap:8px');
-    head.appendChild(mk('b', 'font-size:13.5px;', title + ' v8.17.0'));
+    head.appendChild(mk('b', 'font-size:13.5px;', title + ' v8.18.0'));
     const minBtn = mk('button',
       'background:none;border:0;color:#fff;font-size:22px;' +
       'min-width:32px;min-height:32px;cursor:pointer;padding:0;line-height:1;', '−');
@@ -3258,6 +3258,75 @@
       }
     }
     window.__emisList = () => { listEmisApi(); };
+
+    /* (v8.18) كشف: رقم هاتف أقل من 11 رقماً، ورقم البطاقة الموحدة (نوع 12) أقل من 12 رقماً
+       نقرأ سجل كل طالب كاملاً من EMIS (كما في «مدقق البيانات» في التطبيق الأول) — قراءة فقط، لا يُعدَّل شيء */
+    const K_AUDIT = 'emis_audit_v1';
+    let auditBusy = false;
+    async function auditApi() {
+      if (auditBusy) return;
+      auditBusy = true;
+      window.__emisAuditStop = false;
+      const out = o => gmSet(K_AUDIT, JSON.stringify({ ...o, t: Date.now() }));
+      try {
+        const sm = location.pathname.match(/schools\/(\d+)/);
+        if (!sm) throw new Error('افتح «إدارة الطلاب» للمدرسة في EMIS أولاً');
+        out({ running: true, done: 0, total: 0 });
+        const list = [];
+        for (let page = 1; page <= 20; page++) {
+          const q = new URLSearchParams({ page: String(page), rowsPerPage: '3000', sortBy: 'id', sortOrder: 'desc', entityId: sm[1] });
+          const j = await emisApi('/student/getstudents?' + q);
+          const data = (j && j.data) || [];
+          list.push(...data.filter(x => x && x.id != null));
+          const total = j && j.meta && j.meta.totalCount;
+          if (!data.length || (total ? page * 3000 >= total : data.length < 3000)) break;
+        }
+        const dg = v => String(v ?? '').replace(/[٠-٩]/g, x => x.charCodeAt(0) - 0x660)
+          .replace(/[۰-۹]/g, x => x.charCodeAt(0) - 0x6F0).replace(/\D/g, '');
+        const txt = v => clean(String(v && typeof v === 'object' ? (v.name || v.text || v.label || '') : (v ?? '')));
+        const rows = [];
+        let done = 0, failed = 0, idx = 0;
+        const worker = async () => {
+          while (idx < list.length && !window.__emisAuditStop) {
+            const sum = list[idx++];
+            try {
+              const st = unwrap(await emisApi('/student/getstudent/' + sum.id));
+              if (st && st.id) {
+                const addr = st.address || {};
+                const phone = [st.homePhoneNumber, addr.mobilePhoneNumber, st.mobilePhoneNumber, addr.homePhoneNumber]
+                  .map(v => clean(String(v ?? ''))).find(v => v && v !== 'null' && v !== '-') || '';
+                const ident = st.identification || {};
+                const idType = Number(ident.idType ?? st.idType);
+                const idNumber = clean(String(ident.idNumber ?? st.idNumber ?? ''));
+                const pd = dg(phone), idd = dg(idNumber);
+                const badPhone = pd.length < 11;
+                const badCard = idType === 12 && idd.length < 12;
+                if (badPhone || badCard) {
+                  rows.push({
+                    id: st.id,
+                    name: [st.name, st.fatherName, st.grandFatherName, st.fathersGrandFatherName, st.surName].map(txt).filter(Boolean).join(' ') || txt(sum.fullName),
+                    stage: txt(sum.studentStage || sum.stageName || st.stageName),
+                    room: txt(sum.classRoomName || sum.classRoom || st.classRoomName),
+                    phone, phoneLen: pd.length, badPhone,
+                    idNumber, idLen: idd.length, badCard,
+                  });
+                }
+              } else failed++;
+            } catch (e) { failed++; }
+            done++;
+            if (done % 5 === 0 || done === list.length) out({ running: true, done, total: list.length });
+            await new Promise(r => setTimeout(r, 60));
+          }
+        };
+        await Promise.all([worker(), worker(), worker()]);
+        out({ running: false, done, total: list.length, failed, stopped: !!window.__emisAuditStop, rows });
+      } catch (e) {
+        out({ running: false, error: (e && e.message) || String(e) });
+      } finally {
+        auditBusy = false;
+      }
+    }
+    window.__emisAudit = () => { auditApi(); return true; };
 
     const api = createBar('مساعد EMIS',
       ui => guarded(ui, async () => {

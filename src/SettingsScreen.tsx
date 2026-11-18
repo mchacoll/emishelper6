@@ -22,6 +22,7 @@ export function SettingsScreen(props: {
   onDiagnose: () => void;
   onCompare: () => void;
   onShowOps: () => void;
+  onAudit: () => void;
   opsCount: number;
   onCheckUpdate: () => void;
   versionText: string;
@@ -103,6 +104,7 @@ export function SettingsScreen(props: {
           <Card style={{ padding: 14, gap: 10 }}>
             <Button kind="soft" icon="scale-balance" label="مقارنة موقع الطلاب مع EMIS" onPress={props.onCompare} compact />
             <Button kind="soft" icon="history" label={`سجل العمليات (${props.opsCount})`} onPress={props.onShowOps} compact />
+            <Button kind="soft" icon="card-account-phone-outline" label="كشف الهاتف والبطاقة الموحدة الناقصة" onPress={props.onAudit} compact />
           </Card>
 
           <SectionTitle>المدارس</SectionTitle>

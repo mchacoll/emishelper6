@@ -12,6 +12,7 @@ import WebView, { type WebViewMessageEvent, type WebViewNavigation } from 'react
 
 import { CommandScreen } from './src/CommandScreen';
 import type { AppActions } from './src/agent';
+import { type AuditRow, AuditScreen, type AuditState, auditToRows } from './src/AuditScreen';
 import { PreviewModal, type Preview, type PreviewRow } from './src/PreviewModal';
 import { buildInjection, desktopViewportJs, diagnoseListJs, hostOf, parseBridgeMessage, remoteSetJs, syncAndBootJs } from './src/bridge';
 import { type CmpItem, type CmpReport, type CompareState, CompareScreen } from './src/CompareScreen';
@@ -59,6 +60,7 @@ const K_MARK = 'emis_mark_v1';
 const K_SEND = 'emis_send_req_v1';
 const K_UPD = 'emis_upd_req_v1';
 const K_BACKUP = 'emis_backup_before_edit_v1';
+const K_AUDIT = 'emis_audit_v1';
 // مفاتيح للتطبيق فقط: لا تُمرَّر بين الصفحتين
 const SITE_ONLY = new Set([K_DATA, K_CMD, 'emis_queue_v1', 'emis_sync_v1']);
 const DESKTOP_WIDTH = 1280;
@@ -94,6 +96,8 @@ function Main() {
   const [showGuide, setShowGuide] = useState(false);
   const [showOps, setShowOps] = useState(false);
   const [showCmd, setShowCmd] = useState(false);
+  const [audit, setAudit] = useState<AuditState>({ visible: false, running: false, done: 0, total: 0 });
+  const auditTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const cmpWait = useRef<((r: string) => void) | null>(null);
   const lastReport = useRef<CmpReport | null>(null);
   const [errors, setErrors] = useState<LogLine[]>([]);
@@ -765,6 +769,11 @@ function Main() {
           return;
         case 'act': {
           if (m.ok) return;
+          if (m.action === 'audit:emis') {
+            if (auditTimer.current) clearTimeout(auditTimer.current);
+            setAudit(a => ({ ...a, running: false, error: 'المساعد غير جاهز في EMIS — سجّل الدخول وافتح «إدارة الطلاب»' }));
+            return;
+          }
           if (m.action === 'cmp-list:emis') compareFail('المساعد غير جاهز في EMIS — سجّل الدخول وافتح «إدارة الطلاب»');
           else if (m.action === 'cmp-site:site') compareFail('المساعد غير جاهز في موقع الطلاب — افتح صفحة المنسق');
           else if (m.action === 'cmp-mark:site') {
@@ -800,6 +809,7 @@ function Main() {
             if (SITE_ONLY.has(m.k)) return;
           } else {
             if (m.k === K_GSTAT) return void (str && onGenericStatus(str));
+            if (m.k === K_AUDIT) return void (str && onAudit(str));
             if (m.k === K_EXIST) return void (str && onEmisList(str));
             // نتيجة EMIS لا تُرسل لموقع الطلاب (حتى لا يحدد «تمت المراجعة» لطالب آخر مفتوح هناك)
             if (m.k === K_STATUS) return void (str && onEmisStatus(str));
@@ -873,6 +883,40 @@ function Main() {
   };
 
   const reload = (p: Pane) => setReloadKey(k => ({ ...k, [p]: k[p] + 1 }));
+
+  /* ===================== كشف الهاتف والبطاقة الموحدة (من EMIS، قراءة فقط) ===================== */
+  const armAuditTimer = () => {
+    if (auditTimer.current) clearTimeout(auditTimer.current);
+    auditTimer.current = setTimeout(() => {
+      setAudit(a => (a.running ? { ...a, running: false, error: 'EMIS لا يرد — سجّل الدخول وافتح «إدارة الطلاب» ثم أعد المحاولة' } : a));
+    }, 60000);
+  };
+  const startAudit = () => {
+    setAudit({ visible: true, running: true, done: 0, total: 0 });
+    armAuditTimer();
+    injectAct('emis', '!!window.__emisAudit&&window.__emisAudit()', 'audit:emis');
+  };
+  const onAudit = (raw: string) => {
+    let r: Omit<AuditState, 'visible'>;
+    try {
+      r = JSON.parse(raw);
+    } catch {
+      return;
+    }
+    if (r.running) armAuditTimer();
+    else if (auditTimer.current) clearTimeout(auditTimer.current);
+    setAudit(a => ({ ...a, ...r, running: !!r.running }));
+  };
+  const exportAudit = async (rows: AuditRow[]) => {
+    try {
+      const { headers, rows: data } = auditToRows(rows);
+      const uri = (FileSystem.cacheDirectory || '') + 'emis-phone-card.xlsx';
+      await FileSystem.writeAsStringAsync(uri, toXlsxBase64(headers, data, 'الكشف'), { encoding: FileSystem.EncodingType.Base64 });
+      await Sharing.shareAsync(uri, { mimeType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', dialogTitle: 'كشف الهاتف والبطاقة' });
+    } catch (e) {
+      Alert.alert('تعذّر التصدير', (e as Error)?.message || '');
+    }
+  };
 
   const clearHelperData = () => {
     store.current = {};
@@ -1042,6 +1086,10 @@ function Main() {
           setShowSettings(false);
           setShowOps(true);
         }}
+        onAudit={() => {
+          setShowSettings(false);
+          startAudit();
+        }}
         opsCount={ops.length}
         onDiagnose={() => {
           setShowSettings(false);
@@ -1069,6 +1117,17 @@ function Main() {
         }}
       />
       <CommandScreen visible={showCmd} onClose={() => setShowCmd(false)} actions={appActions} />
+      <AuditScreen
+        state={audit}
+        onClose={() => {
+          if (audit.running) emisRef.current?.injectJavaScript('window.__emisAuditStop=true;true;');
+          if (auditTimer.current) clearTimeout(auditTimer.current);
+          setAudit(a => ({ ...a, visible: false, running: false }));
+        }}
+        onStop={() => emisRef.current?.injectJavaScript('window.__emisAuditStop=true;true;')}
+        onRestart={startAudit}
+        onExport={exportAudit}
+      />
       <UpdateModal manifest={update} onClose={() => setUpdate(null)} />
       <CompareScreen
         state={cmp}
