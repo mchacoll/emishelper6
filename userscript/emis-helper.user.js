@@ -1,7 +1,7 @@
 // ==UserScript==
-// @name         مساعد EMIS – تعبئة تلقائية (v8.25.0)
+// @name         مساعد EMIS – تعبئة تلقائية (v8.26.0)
 // @namespace    emis-helper
-// @version      8.25.0
+// @version      8.26.0
 // @description  تعبئة تلقائية لـ EMIS + حفظ + «تمت المراجعة» + فتح «جديد» + نقل «الاحتياجات الخاصة» من EMIS إلى موقعك
 // @match        *://*/*
 // @grant        GM_setValue
@@ -316,7 +316,7 @@
     ui.dir = 'rtl';
 
     const head = mk('div', 'display:flex;justify-content:space-between;align-items:center;gap:8px');
-    head.appendChild(mk('b', 'font-size:13.5px;', title + ' v8.25.0'));
+    head.appendChild(mk('b', 'font-size:13.5px;', title + ' v8.26.0'));
     const minBtn = mk('button',
       'background:none;border:0;color:#fff;font-size:22px;' +
       'min-width:32px;min-height:32px;cursor:pointer;padding:0;line-height:1;', '−');
@@ -2870,6 +2870,27 @@
       } catch (e) { out({ ok: false, error: (e && e.message) || String(e) }); }
     }
     window.__emisSiteStudents = () => { siteStudentsApi(); return true; };
+    // (v8.26) المحافظة والمكان والمدينة من استمارة كل طالب (لتصحيحها في EMIS)
+    async function sitePlacesApi() {
+      const out = o => gmSet('emis_site_places_v1', JSON.stringify({ ...o, t: Date.now() }));
+      try {
+        const me = await trpc('school.me');
+        if (!me || !me.slug) throw new Error('سجّل دخول المنسق في موقع الطلاب');
+        const list = (await trpc('student.listForSchool', { schoolSlug: me.slug })) || [];
+        const items = [];
+        for (const rec of list) {
+          if (!rec || typeof rec !== 'object') continue;
+          const d = recordToData(rec, me.name);
+          items.push({
+            name: [d.name, d.father, d.grandfather, d.greatGrandfather].filter(Boolean).join(' '),
+            n: { name: d.name || '', father: d.father || '', grandfather: d.grandfather || '', greatGrandfather: d.greatGrandfather || '' },
+            gov: d.governorate || '', place: d.placeSite || '', city: d.citySite || '',
+          });
+        }
+        out({ ok: true, school: me.name || '', items });
+      } catch (e) { out({ ok: false, error: (e && e.message) || String(e) }); }
+    }
+    window.__emisSitePlaces = () => { sitePlacesApi(); return true; };
     async function siteMoveApi(id, grade, section) {
       const res = o => gmSet('emis_move_v1', JSON.stringify({ source: 'site', id, ...o, t: Date.now() }));
       try {
@@ -3593,6 +3614,137 @@
       } catch (e) { res({ ok: false, error: (e && e.message) || String(e) }); }
     }
     window.__emisMove = (n, grade, section, dry) => { emisMoveApi(n || {}, String(grade || ''), String(section || ''), !!dry); return true; };
+
+    /* (v8.26) تصحيح المكان والمدينة في EMIS حسب الاستمارة (لمدارس «حسب الاستمارة» مثل التوحيد)
+       scan: يطابق كل طالب EMIS مع استمارته (الاسم الرباعي حقلاً حقلاً) ويعيد ما سيتغيّر فقط — لا يكتب شيئاً
+       apply: يعدّل العنوان (المكان + المدينة) فقط لكل طالب في القائمة، واحداً بعد الآخر، مع نسخة احتياطية */
+    const K_PLACE = 'emis_place_v1';
+    async function placeTree() {
+      const nodes = unwrap(apiCache.tree || (apiCache.tree = await emisApi('/CountryStructure/getcountrystructure')));
+      return Array.isArray(nodes) ? nodes : [];
+    }
+    function resolvePlace(nodes, gov, text) {
+      const iraqN = nodes.find(x => norm(oTxt(x)).includes(norm('العراق'))) || nodes[0];
+      const govN = gov && iraqN ? kids(iraqN).find(x => norm(oTxt(x)) === norm(gov)) || kids(iraqN).find(x => norm(oTxt(x)).includes(norm(gov))) : null;
+      const want = norm(text);
+      if (!want) return null;
+      const dfs = (list, exact) => { for (const x of list) { const t = norm(oTxt(x)); if (exact ? t === want : t.includes(want)) return x; const h = dfs(kids(x), exact); if (h) return h; } return null; };
+      const root = govN ? kids(govN) : (iraqN ? kids(iraqN) : nodes);
+      const hit = dfs(root, true) || dfs(root, false);
+      return hit ? { id: parseInt(oVal(hit), 10), name: oTxt(hit) } : null;
+    }
+    function placeNameById(nodes, id) {
+      const dfs = list => { for (const x of list) { if (String(oVal(x)) === String(id)) return oTxt(x); const h = dfs(kids(x)); if (h) return h; } return ''; };
+      return id ? dfs(nodes) : '';
+    }
+    let placeBusy = false;
+    async function placeScanApi(items) {
+      if (placeBusy) return;
+      placeBusy = true;
+      window.__emisPlaceStop = false;
+      const out = o => gmSet(K_PLACE, JSON.stringify({ phase: 'scan', ...o, t: Date.now() }));
+      try {
+        const sm = location.pathname.match(/schools\/(\d+)/);
+        if (!sm) throw new Error('افتح «إدارة الطلاب» للمدرسة في EMIS أولاً');
+        const L = v => norm(clean(String(v ?? ''))).replace(/[^\u0621-\u064A\u0671-\u06D5]/g, '');
+        out({ running: true, done: 0, total: 0 });
+        const nodes = await placeTree();
+        // الاستمارات بمفتاح الاسم الرباعي
+        const byKey = new Map();
+        for (const it of items || []) {
+          const n = it.n || {};
+          if (!L(n.name) || !L(n.father) || !L(n.grandfather) || !L(n.greatGrandfather)) continue;
+          const k = L(n.name) + L(n.father) + L(n.grandfather) + L(n.greatGrandfather);
+          byKey.set(k, byKey.has(k) ? null : it);   // null = مكرر في الموقع (لا نلمسه)
+        }
+        const keys = [...byKey.keys()];
+        const list = [];
+        for (let page = 1; page <= 20; page++) {
+          const q = new URLSearchParams({ page: String(page), rowsPerPage: '3000', sortBy: 'id', sortOrder: 'desc', entityId: sm[1] });
+          const j = await emisApi('/student/getstudents?' + q);
+          const data = (j && j.data) || [];
+          list.push(...data.filter(x => x && x.id != null));
+          const total = j && j.meta && j.meta.totalCount;
+          if (!data.length || (total ? page * 3000 >= total : data.length < 3000)) break;
+        }
+        const cands = [];
+        for (const st of list) {
+          const fn = L(st.fullName);
+          const k = keys.find(kk => fn.startsWith(kk));
+          if (k && byKey.get(k)) cands.push({ id: st.id, it: byKey.get(k) });
+        }
+        const changes = [], unresolved = new Set();
+        let same = 0, done = 0, idx = 0;
+        const worker = async () => {
+          while (idx < cands.length && !window.__emisPlaceStop) {
+            const c = cands[idx++];
+            try {
+              const cur = unwrap(await emisApi('/student/getstudent/' + c.id));
+              const n = c.it.n;
+              if (cur && cur.id && L(cur.name) === L(n.name) && L(cur.fatherName) === L(n.father) &&
+                L(cur.grandFatherName) === L(n.grandfather) && L(cur.fathersGrandFatherName) === L(n.greatGrandfather)) {
+                const target = resolvePlace(nodes, c.it.gov, c.it.place);
+                if (!target) unresolved.add([c.it.gov, c.it.place].filter(Boolean).join(' / ') || '(فارغ)');
+                else {
+                  const a = cur.address || {};
+                  const city = clean(c.it.city);
+                  const placeSame = String(a.countryStructureId) === String(target.id);
+                  const citySame = !city || clean(a.town) === city;
+                  if (placeSame && citySame) same++;
+                  else changes.push({
+                    emisId: cur.id,
+                    name: [cur.name, cur.fatherName, cur.grandFatherName, cur.fathersGrandFatherName].map(v => clean(String(v ?? ''))).filter(Boolean).join(' '),
+                    fromPlace: placeNameById(nodes, a.countryStructureId) || String(a.countryStructureId || '—'), fromCity: clean(a.town) || '—',
+                    toPlace: target.name, toCity: city || clean(a.town) || '—', placeId: target.id, city: city || clean(a.town) || '',
+                  });
+                }
+              }
+            } catch { /* ignore */ }
+            done++;
+            if (done % 5 === 0 || done === cands.length) out({ running: true, done, total: cands.length });
+            await new Promise(r => setTimeout(r, 60));
+          }
+        };
+        await Promise.all([worker(), worker(), worker()]);
+        out({ running: false, done, total: cands.length, emisTotal: list.length, matched: cands.length, same, changes, unresolved: [...unresolved], stopped: !!window.__emisPlaceStop });
+      } catch (e) {
+        out({ running: false, error: (e && e.message) || String(e) });
+      } finally { placeBusy = false; }
+    }
+    async function placeApplyApi(list) {
+      if (placeBusy) return;
+      placeBusy = true;
+      window.__emisPlaceStop = false;
+      const out = o => gmSet(K_PLACE, JSON.stringify({ phase: 'apply', ...o, t: Date.now() }));
+      const failed = [], backups = [];
+      let ok = 0, done = 0;
+      try {
+        const dOnly = v => { const m = String(v || '').match(/^(\d{4})-(\d{1,2})-(\d{1,2})/); return m ? m[1] + '-' + m[2].padStart(2, '0') + '-' + m[3].padStart(2, '0') : null; };
+        out({ running: true, done, total: list.length, ok });
+        for (const c of list) {
+          if (window.__emisPlaceStop) break;
+          try {
+            const cur = unwrap(await emisApi('/student/getstudent/' + c.emisId));
+            if (!cur || !cur.id) throw new Error('تعذّرت قراءة الطالب');
+            backups.push({ emisId: cur.id, name: c.name, address: cur.address || null });
+            const o = { ...cur, dateOfBirth: dOnly(cur.dateOfBirth), identification: { ...(cur.identification || {}) },
+              address: { ...(cur.address || {}), countryStructureId: c.placeId, town: c.city } };
+            o.identification.issuingDate = dOnly(o.identification.issuingDate);
+            if (o.fatherIdentification && o.fatherIdentification.issuingDate) o.fatherIdentification = { ...o.fatherIdentification, issuingDate: dOnly(o.fatherIdentification.issuingDate) };
+            await emisApi('/student/updatestudent', o);
+            ok++;
+          } catch (e) { failed.push({ name: c.name, error: (e && e.message) || String(e) }); }
+          done++;
+          out({ running: true, done, total: list.length, ok });
+          await new Promise(r => setTimeout(r, 150));
+        }
+        out({ running: false, done, total: list.length, ok, failed, backups, stopped: !!window.__emisPlaceStop });
+      } catch (e) {
+        out({ running: false, done, total: list.length, ok, failed, backups, error: (e && e.message) || String(e) });
+      } finally { placeBusy = false; }
+    }
+    window.__emisPlaceScan = items => { placeScanApi(items || []); return true; };
+    window.__emisPlaceApply = list => { placeApplyApi(list || []); return true; };
 
     const api = createBar('مساعد EMIS',
       ui => guarded(ui, async () => {

@@ -11,6 +11,7 @@ import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
 import WebView, { type WebViewMessageEvent, type WebViewNavigation } from 'react-native-webview';
 
 import { type AuditRow, AuditScreen, type AuditState, auditToRows } from './src/AuditScreen';
+import { type PlaceChange, PlaceFixScreen, type PlaceFixState } from './src/PlaceFixScreen';
 import { type StatRow, StatsScreen, type StatsState, statsToRows } from './src/StatsScreen';
 import { type SiteStudent, TransferScreen, type TransferState } from './src/TransferScreen';
 import { PreviewModal, type Preview, type PreviewRow } from './src/PreviewModal';
@@ -105,6 +106,9 @@ function Main() {
   const [stats, setStats] = useState<StatsState>({ visible: false, site: { running: false }, emis: { running: false } });
   const [transfer, setTransfer] = useState<TransferState>({ visible: false, loading: false, list: [] });
   const [moving, setMoving] = useState<number | null>(null);
+  const [placeFix, setPlaceFix] = useState<PlaceFixState>({ visible: false, step: 'site' });
+  const placeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const placeChanges = useRef<PlaceChange[]>([]);
   const moveRef = useRef<{ s: SiteStudent; grade: string; section: string; emisMoved: boolean } | null>(null);
   const moveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const fixTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -686,6 +690,11 @@ function Main() {
           return;
         case 'act': {
           if (m.ok) return;
+          if (m.action === 'places:site' || m.action === 'places:emis') {
+            if (placeTimer.current) clearTimeout(placeTimer.current);
+            setPlaceFix(p => ({ ...p, step: 'error', error: m.action === 'places:site' ? 'افتح صفحة المنسق في موقع الطلاب' : 'سجّل الدخول وافتح «إدارة الطلاب» في EMIS' }));
+            return;
+          }
           if (m.action === 'stats:site' || m.action === 'stats:emis') {
             const src = m.action === 'stats:site' ? 'site' : 'emis';
             setStats(x => ({ ...x, [src]: { running: false, error: src === 'site' ? 'افتح صفحة المنسق في موقع الطلاب' : 'سجّل الدخول وافتح «إدارة الطلاب» في EMIS' } }));
@@ -732,6 +741,7 @@ function Main() {
           if (pane === 'site') {
             // طلب زر «إرسال إلى EMIS»: يتولاه التطبيق فقط (لا يُمرَّر لـ EMIS حتى لا يُسجَّل مرتين)
             if (m.k === K_SEND) return void (str && onSendRequest(str));
+            if (m.k === 'emis_site_places_v1') return void (str && onSitePlaces(str));
             if (m.k === 'emis_site_students_v1') {
               try {
                 const r = JSON.parse(str || '{}');
@@ -745,6 +755,7 @@ function Main() {
             if (m.k === 'emis_fix_v1') return void (str && onFixResult(str));
             if (m.k === 'emis_stats_v1') return void (str && onStats(str));
             if (m.k === 'emis_move_v1') return void (str && onMoveResult(str));
+            if (m.k === 'emis_place_v1') return void (str && onPlace(str));
             if (m.k === K_UPD) return void (str && onUpdRequest(str));
             if (m.k === K_CMP) return void (str && onCompareResult(str));
             if (m.k === K_MARKMANY) return void (str && onMarkManyProgress(str));
@@ -765,6 +776,7 @@ function Main() {
             if (m.k === 'emis_fix_v1') return void (str && onFixResult(str));
             if (m.k === 'emis_stats_v1') return void (str && onStats(str));
             if (m.k === 'emis_move_v1') return void (str && onMoveResult(str));
+            if (m.k === 'emis_place_v1') return void (str && onPlace(str));
             if (m.k === K_EXIST) return void (str && onEmisList(str));
             // نتيجة EMIS لا تُرسل لموقع الطلاب (حتى لا يحدد «تمت المراجعة» لطالب آخر مفتوح هناك)
             if (m.k === K_STATUS) return void (str && onEmisStatus(str));
@@ -925,6 +937,103 @@ function Main() {
     } catch (e) {
       Alert.alert('تعذّر التصدير', (e as Error)?.message || '');
     }
+  };
+
+  /* ===================== تصحيح المكان والمدينة في EMIS حسب الاستمارة (دفعة بعد معاينة) ===================== */
+  const armPlace = () => {
+    if (placeTimer.current) clearTimeout(placeTimer.current);
+    placeTimer.current = setTimeout(() => {
+      setPlaceFix(p => (p.step === 'site' || p.step === 'scan' || p.step === 'apply' ? { ...p, step: 'error', error: 'لا يوجد رد — تحقق من EMIS وموقع الطلاب ثم أعد المحاولة' } : p));
+    }, 90000);
+  };
+  const startPlaceFix = () => {
+    setPlaceFix({ visible: true, step: 'site' });
+    armPlace();
+    injectAct('site', '!!window.__emisSitePlaces&&window.__emisSitePlaces()', 'places:site');
+  };
+  const onSitePlaces = (raw: string) => {
+    let r: { ok: boolean; error?: string; school?: string; items?: unknown[] };
+    try {
+      r = JSON.parse(raw);
+    } catch {
+      return;
+    }
+    if (!r.ok) return void setPlaceFix(p => ({ ...p, step: 'error', error: r.error || 'تعذّرت قراءة موقع الطلاب' }));
+    // للمدارس «حسب الاستمارة» فقط (مثل التوحيد)
+    const school = r.school || '';
+    const rule = normalizedSchools(settingsRef.current.schools).find(x => x.key && school.includes(x.key));
+    if (!rule || rule.mode !== 'form') {
+      if (placeTimer.current) clearTimeout(placeTimer.current);
+      return void setPlaceFix(p => ({
+        ...p,
+        step: 'error',
+        school,
+        error: `«${school}» ليست من مدارس «حسب الاستمارة». أضفها في الإعدادات ← المدارس بنوع «حسب الاستمارة» أولاً.`,
+      }));
+    }
+    setPlaceFix(p => ({ ...p, step: 'scan', school, done: 0, total: 0 }));
+    armPlace();
+    injectAct('emis', '!!window.__emisPlaceScan&&window.__emisPlaceScan(' + JSON.stringify(r.items || []) + ')', 'places:emis');
+  };
+  const onPlace = (raw: string) => {
+    let r: Omit<PlaceFixState, 'visible' | 'step'> & { phase: 'scan' | 'apply'; running: boolean; backups?: { emisId: number; name: string; address: unknown }[] };
+    try {
+      r = JSON.parse(raw);
+    } catch {
+      return;
+    }
+    armPlace();
+    if (r.running) return void setPlaceFix(p => ({ ...p, done: r.done, total: r.total, ok: r.ok }));
+    if (placeTimer.current) clearTimeout(placeTimer.current);
+    if (r.error && r.phase === 'scan') return void setPlaceFix(p => ({ ...p, step: 'error', error: r.error }));
+    if (r.phase === 'scan') {
+      placeChanges.current = r.changes || [];
+      return void setPlaceFix(p => ({ ...p, ...r, step: 'review' }));
+    }
+    // انتهى التصحيح: نسخة احتياطية + سجل العمليات
+    if (r.backups?.length) {
+      AsyncStorage.getItem(K_BACKUP)
+        .then(v => {
+          const arr = v ? JSON.parse(v) : [];
+          for (const b of r.backups || []) arr.push({ t: Date.now(), site: b.name, emisId: b.emisId, before: { address: b.address }, kind: 'place' });
+          return AsyncStorage.setItem(K_BACKUP, JSON.stringify(arr.slice(-500)));
+        })
+        .catch(() => {});
+    }
+    const failedNames = new Set((r.failed || []).map(f => f.name));
+    // سجل العمليات دفعة واحدة (حفظ واحد)
+    const now = Date.now();
+    const newOps: Op[] = placeChanges.current.slice(0, r.done || 0).map(c => ({
+      t: now, id: c.emisId, k: '', name: c.name, school: placeFix.school || '', grade: '', section: '',
+      result: failedNames.has(c.name) ? 'fail' : 'ok',
+      reason: `المكان: ${c.fromPlace} · ${c.fromCity} ← ${c.toPlace} · ${c.toCity}`,
+    }));
+    if (newOps.length) {
+      opsRef.current = [...opsRef.current, ...newOps].slice(-3000);
+      setOpsState(opsRef.current);
+      AsyncStorage.setItem(K_OPS_APP, JSON.stringify(opsRef.current)).catch(() => {});
+    }
+    setPlaceFix(p => ({ ...p, step: 'done', ok: r.ok, total: r.total, failed: r.failed, stopped: r.stopped, error: r.error }));
+    emisStale.current = true;
+  };
+  const applyPlaceFix = () => {
+    const list: PlaceChange[] = placeFix.changes || [];
+    if (!list.length) return;
+    Alert.alert(
+      'تأكيد التصحيح',
+      `سيُعدَّل المكان والمدينة في EMIS الحقيقي لـ ${list.length} طالب، واحداً بعد الآخر، حسب استماراتهم.\n\nتُحفظ نسخة من العنوان القديم لكل طالب. متابعة؟`,
+      [
+        { text: 'إلغاء', style: 'cancel' },
+        {
+          text: `تصحيح ${list.length}`,
+          onPress: () => {
+            setPlaceFix(p => ({ ...p, step: 'apply', done: 0, total: list.length, ok: 0 }));
+            armPlace();
+            injectAct('emis', '!!window.__emisPlaceApply&&window.__emisPlaceApply(' + JSON.stringify(list) + ')', 'places:emis');
+          },
+        },
+      ],
+    );
   };
 
   /* ===================== نقل طالب (EMIS أولاً ثم موقع الطلاب) ===================== */
@@ -1214,6 +1323,10 @@ function Main() {
           setShowSettings(false);
           loadTransfer();
         }}
+        onPlaceFix={() => {
+          setShowSettings(false);
+          startPlaceFix();
+        }}
         opsCount={ops.length}
         onShowGuide={() => {
           setShowSettings(false);
@@ -1272,6 +1385,17 @@ function Main() {
         onClose={() => setTransfer(t => ({ ...t, visible: false }))}
         onReload={loadTransfer}
         onMove={startMove}
+      />
+      <PlaceFixScreen
+        state={placeFix}
+        onClose={() => {
+          if (placeFix.step === 'scan' || placeFix.step === 'apply') emisRef.current?.injectJavaScript('window.__emisPlaceStop=true;true;');
+          if (placeTimer.current) clearTimeout(placeTimer.current);
+          setPlaceFix(p => ({ ...p, visible: false }));
+        }}
+        onApply={applyPlaceFix}
+        onStop={() => emisRef.current?.injectJavaScript('window.__emisPlaceStop=true;true;')}
+        onRestart={startPlaceFix}
       />
       <UpdateModal manifest={update} onClose={() => setUpdate(null)} />
       <CompareScreen

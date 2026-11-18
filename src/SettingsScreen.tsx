@@ -24,6 +24,7 @@ export function SettingsScreen(props: {
   onAudit: (source: 'site' | 'emis') => void;
   onStats: () => void;
   onTransfer: () => void;
+  onPlaceFix: () => void;
   opsCount: number;
   onCheckUpdate: () => void;
   owner: boolean;
@@ -127,6 +128,7 @@ export function SettingsScreen(props: {
             <Button kind="soft" icon="history" label={`سجل العمليات (${props.opsCount})`} onPress={props.onShowOps} compact />
             <Button kind="soft" icon="chart-box-outline" label="إحصاء المدرسة (الموقع و EMIS)" onPress={props.onStats} compact />
             <Button kind="soft" icon="swap-horizontal" label="نقل طالب إلى صف أو شعبة" onPress={props.onTransfer} compact />
+            <Button kind="gold" icon="map-marker-check" label="تصحيح المكان والمدينة في EMIS (التوحيد)" onPress={props.onPlaceFix} compact />
             <Button kind="soft" icon="card-account-phone-outline" label="كشف الهاتف والبطاقة — موقع الطلاب" onPress={() => props.onAudit('site')} compact />
             <Button kind="soft" icon="card-account-phone-outline" label="كشف الهاتف والبطاقة — EMIS" onPress={() => props.onAudit('emis')} compact />
           </Card>
