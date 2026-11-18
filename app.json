@@ -2,7 +2,7 @@
   "expo": {
     "name": "بوابة EMIS",
     "slug": "emishelper",
-    "version": "8.18.0",
+    "version": "8.19.0",
     "orientation": "default",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "light",
@@ -30,6 +30,17 @@
     "ios": {
       "bundleIdentifier": "com.emishelper.app",
       "supportsTablet": true
-    }
+    },
+    "plugins": [
+      [
+        "expo-build-properties",
+        {
+          "android": {
+            "useLegacyPackaging": true
+          }
+        }
+      ],
+      "./plugins/withAbiSplits"
+    ]
   }
 }

@@ -1,5 +1,6 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import Constants from 'expo-constants';
+import * as Device from 'expo-device';
 import * as FileSystem from 'expo-file-system/legacy';
 import * as IntentLauncher from 'expo-intent-launcher';
 
@@ -10,6 +11,8 @@ import { USERSCRIPT_SOURCE } from './userscript.generated';
  *  - كل بناء ينشر «إصداراً» عاماً على GitHub فيه: emishelper.apk + version.json + emis-helper.user.js
  *  - التطبيق يقرأ version.json: إن كان هناك APK أحدث يعرض «تحديث جديد» ويثبّته بضغطة
  *  - وإن كان السكربت أحدث فقط، يُنزَّل ويُستخدم فوراً بدون إعادة تثبيت التطبيق
+ *  - (v8.19) ملف APK لكل نوع معالج (أصغر بكثير من الشامل)، والإصدار الذي يغيّر السكربت فقط
+ *    لا يبني APK جديداً أصلاً (التحديث بضع مئات من الكيلوبايت)
  */
 const REPO = 'mchacoll/emishelper6';
 const BASE = `https://github.com/${REPO}/releases/latest/download/`;
@@ -20,6 +23,7 @@ export type Manifest = {
   versionCode: number; // رقم البناء
   scriptVersion: string;
   scriptMinBuild: number; // أقل رقم بناء للتطبيق يعمل معه هذا السكربت
+  apkSizes?: Record<string, number>; // حجم كل ملف APK بالبايت
   notes: string[];
 };
 
@@ -88,6 +92,20 @@ export async function updateScript(m: Manifest, currentVersion: string): Promise
   }
 }
 
+const UNIVERSAL = 'emishelper.apk';
+/** ملف APK المناسب لمعالج هذا الهاتف */
+export function apkName(): string {
+  const abis = Device.supportedCpuArchitectures || [];
+  if (abis.includes('arm64-v8a')) return 'emishelper-arm64-v8a.apk';
+  if (abis.includes('armeabi-v7a')) return 'emishelper-armeabi-v7a.apk';
+  return UNIVERSAL;
+}
+/** حجم التنزيل بالميغابايت (إن عُرف) */
+export function updateSizeMB(m: Manifest | null): string {
+  const sz = m?.apkSizes?.[apkName()] || m?.apkSizes?.[UNIVERSAL];
+  return sz ? (sz / 1048576).toFixed(1) : '';
+}
+
 /** تنزيل APK الجديد ثم فتح شاشة التثبيت */
 export async function downloadAndInstall(onProgress: (p: number) => void): Promise<void> {
   const dest = (FileSystem.cacheDirectory || '') + 'emishelper-update.apk';
@@ -96,10 +114,14 @@ export async function downloadAndInstall(onProgress: (p: number) => void): Promi
   } catch {
     /* ignore */
   }
-  const task = FileSystem.createDownloadResumable(BASE + 'emishelper.apk', dest, {}, d => {
-    if (d.totalBytesExpectedToWrite > 0) onProgress(d.totalBytesWritten / d.totalBytesExpectedToWrite);
-  });
-  const res = await task.downloadAsync();
+  const get = (name: string) =>
+    FileSystem.createDownloadResumable(BASE + name, dest, {}, d => {
+      if (d.totalBytesExpectedToWrite > 0) onProgress(d.totalBytesWritten / d.totalBytesExpectedToWrite);
+    }).downloadAsync();
+  const name = apkName();
+  let res = await get(name);
+  // إصدار قديم بلا ملف لهذا المعالج: الملف الشامل
+  if (name !== UNIVERSAL && (!res || res.status !== 200)) res = await get(UNIVERSAL);
   if (!res || res.status !== 200) throw new Error('فشل التنزيل (' + (res ? res.status : '?') + ')');
   const uri = await FileSystem.getContentUriAsync(res.uri);
   await IntentLauncher.startActivityAsync('android.intent.action.VIEW', {

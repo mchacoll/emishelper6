@@ -10,12 +10,10 @@ import { ActivityIndicator, Alert, AppState, BackHandler, Pressable, Share, Styl
 import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
 import WebView, { type WebViewMessageEvent, type WebViewNavigation } from 'react-native-webview';
 
-import { CommandScreen } from './src/CommandScreen';
-import type { AppActions } from './src/agent';
 import { type AuditRow, AuditScreen, type AuditState, auditToRows } from './src/AuditScreen';
 import { PreviewModal, type Preview, type PreviewRow } from './src/PreviewModal';
 import { buildInjection, desktopViewportJs, diagnoseListJs, hostOf, parseBridgeMessage, remoteSetJs, syncAndBootJs } from './src/bridge';
-import { type CmpItem, type CmpReport, type CompareState, CompareScreen } from './src/CompareScreen';
+import { type CmpItem, type CompareState, CompareScreen } from './src/CompareScreen';
 import { parseGeneric, toXlsxBase64 } from './src/excel';
 import { type ExcelData, ExcelScreen } from './src/ExcelScreen';
 import { Onboarding } from './src/Onboarding';
@@ -95,11 +93,8 @@ function Main() {
   const [showSettings, setShowSettings] = useState(false);
   const [showGuide, setShowGuide] = useState(false);
   const [showOps, setShowOps] = useState(false);
-  const [showCmd, setShowCmd] = useState(false);
   const [audit, setAudit] = useState<AuditState>({ visible: false, running: false, done: 0, total: 0 });
   const auditTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const cmpWait = useRef<((r: string) => void) | null>(null);
-  const lastReport = useRef<CmpReport | null>(null);
   const [errors, setErrors] = useState<LogLine[]>([]);
   const [reloadKey, setReloadKey] = useState({ site: 0, emis: 0 });
   const [loading, setLoading] = useState<Record<Pane, boolean>>({ site: true, emis: true });
@@ -515,10 +510,10 @@ function Main() {
   };
 
   /* ===================== المقارنة مع EMIS ===================== */
-  const startCompare = (show = true) => {
+  const startCompare = () => {
     if (compareStep.current !== 'none') return;
     compareStep.current = 'emis';
-    setCmp(c => ({ ...c, visible: show, step: 'emis', text: 'قراءة طلاب EMIS...', percent: 5, mark: undefined }));
+    setCmp(c => ({ ...c, visible: true, step: 'emis', text: 'قراءة طلاب EMIS...', percent: 5, mark: undefined }));
     injectAct('emis', '!!window.__emisList&&(window.__emisList(),true)', 'cmp-list:emis');
     setTimeout(() => {
       if (compareStep.current === 'emis') compareFail('انتهت مهلة قراءة EMIS');
@@ -526,8 +521,6 @@ function Main() {
   };
   const compareFail = (why: string) => {
     compareStep.current = 'none';
-    cmpWait.current?.('تعذّرت المقارنة: ' + why);
-    cmpWait.current = null;
     setCmp(c => ({ ...c, step: 'error', text: why, percent: 0 }));
   };
   const onEmisList = (raw: string) => {
@@ -570,109 +563,8 @@ function Main() {
       return;
     }
     const report = { school: r.school, total: r.total, emisRows: existingRef.current?.rows || 0, items: r.items || [] };
-    lastReport.current = report;
     setCmp(c => ({ ...c, step: 'done', text: '', percent: 100, report }));
-    if (cmpWait.current) {
-      cmpWait.current(compareSummary(report));
-      cmpWait.current = null;
-    }
   };
-  const compareSummary = (r: CmpReport) => {
-    const missing = r.items.filter(i => !i.inEmis);
-    const toMark = r.items.filter(i => i.inEmis && !i.reviewed);
-    const line = (i: CmpItem) =>
-      `id=${i.id} | ${i.name} | ${[i.grade, i.section].filter(Boolean).join(' ')}${i.reviewed ? ' | عليه تمت المراجعة' : ''}${i.maybe ? ' | تطابق ثلاثي فقط' : ''}${i.noGgf ? ' | بدون جد الأب' : ''}`;
-    return [
-      `المدرسة: ${r.school}. في موقع الطلاب: ${r.total}. في EMIS: ${r.emisRows}.`,
-      `موجود في EMIS: ${r.total - missing.length} (منهم بدون «تمت المراجعة»: ${toMark.length}).`,
-      `غير موجود في EMIS: ${missing.length}${missing.length > 80 ? ' (أول 80)' : ''}:`,
-      ...missing.slice(0, 80).map(line),
-    ].join('\n');
-  };
-
-  /* ===================== مساعد الأوامر: أفعال التطبيق ===================== */
-  const fmtT = (t: number) => {
-    const d = new Date(t);
-    return `${d.getFullYear()}-${d.getMonth() + 1}-${d.getDate()} ${d.getHours()}:${String(d.getMinutes()).padStart(2, '0')}`;
-  };
-  const appActions: AppActions = {
-    status: async () => {
-      const day = new Date().toDateString();
-      const today = opsRef.current.filter(o => new Date(o.t).toDateString() === day);
-      const r = lastReport.current;
-      return [
-        `التبويب المفتوح: ${activeRef.current}${settingsRef.current.split ? ' (عرض الشاشتين)' : ''}`,
-        `عمليات اليوم: ${today.length} (نجحت ${today.filter(o => o.result === 'ok').length}، فشلت ${today.filter(o => o.result === 'fail').length}). كل السجل: ${opsRef.current.length}.`,
-        r ? `آخر مقارنة: ${r.school} — في الموقع ${r.total}، غير موجود في EMIS ${r.items.filter(i => !i.inEmis).length}.` : 'لم تُشغَّل مقارنة بعد.',
-        send.current || upd.current ? 'يوجد إرسال أو تعديل جارٍ الآن.' : '',
-        `النسخة: ${installedVersion()}`,
-      ]
-        .filter(Boolean)
-        .join('\n');
-    },
-    openTab: async tab => {
-      setActive(tab);
-      return 'فُتح التبويب ' + tab;
-    },
-    reload: async pane => {
-      reload(pane);
-      return 'أُعيد تحميل ' + pane;
-    },
-    compare: () =>
-      new Promise<string>(resolve => {
-        if (compareStep.current !== 'none') return resolve('توجد مقارنة جارية الآن، انتظر.');
-        cmpWait.current = resolve;
-        startCompare(false);
-      }),
-    showCompare: async () => {
-      if (!lastReport.current) return 'لا توجد مقارنة بعد — شغّل compare_with_emis أولاً.';
-      setShowCmd(false);
-      setCmp(c => ({ ...c, visible: true }));
-      return 'فُتحت شاشة المقارنة.';
-    },
-    sendStudent: async id => {
-      if (send.current || upd.current) return 'يوجد إرسال جارٍ الآن، انتظر.';
-      const it = lastReport.current?.items.find(i => i.id === id);
-      if (it?.inEmis) return `${it.name} موجود في EMIS مسبقاً — لم أرسله.`;
-      setShowCmd(false);
-      if (!settingsRef.current.split) setActive('site');
-      siteRef.current?.injectJavaScript(`window.__emisSendId&&window.__emisSendId(${Number(id)});true;`);
-      return `فُتح فحص ومعاينة إرسال ${it ? it.name : 'الطالب ' + id}. المستخدم يراجع ويضغط «إرسال» بنفسه.`;
-    },
-    markReviewed: async () => {
-      const r = lastReport.current;
-      if (!r) return 'لا توجد مقارنة بعد — شغّل compare_with_emis أولاً.';
-      const ids = r.items.filter(i => i.inEmis && !i.reviewed).map(i => i.id);
-      if (!ids.length) return 'كل الموجودين في EMIS عليهم «تمت المراجعة».';
-      markAllReviewed(ids);
-      return `طُلب تأكيد المستخدم لتحديد ${ids.length} طالب.`;
-    },
-    searchOps: async (q, result) => {
-      const qq = q.trim();
-      const hits = opsRef.current
-        .filter(o => (result === 'all' ? true : o.result === result))
-        .filter(o => !qq || o.name.includes(qq) || o.school.includes(qq))
-        .slice(-30)
-        .reverse();
-      if (!hits.length) return 'لا نتائج.';
-      return hits.map(o => `${fmtT(o.t)} | ${o.name} | ${o.grade} ${o.section} | ${o.result === 'ok' ? 'نجح' : 'فشل'}${o.reason ? ' | ' + o.reason : ''}`).join('\n');
-    },
-    exportOps: async () => {
-      if (!opsRef.current.length) return 'السجل فارغ.';
-      await exportOps(opsRef.current);
-      return 'فُتحت نافذة مشاركة ملف Excel.';
-    },
-    showOps: async () => {
-      setShowCmd(false);
-      setShowOps(true);
-      return 'فُتح سجل العمليات.';
-    },
-    checkUpdates: async () => {
-      await checkUpdates(true);
-      return 'تم الفحص؛ إن وُجد تحديث ظهرت نافذته.';
-    },
-  };
-
   const markAllReviewed = (ids: number[]) => {
     if (!ids.length) return;
     Alert.alert('تحديد «تمت المراجعة»', `سيُحدَّد «تمت المراجعة» في موقع الطلاب لـ ${ids.length} طالب موجودين في EMIS (بالاسم الرباعي). متابعة؟`, [
@@ -1013,7 +905,6 @@ function Main() {
           }}
           accessibilityLabel="إعادة تحميل"
         />
-        <IconButton icon="robot-outline" onPress={() => setShowCmd(true)} accessibilityLabel="مساعد الأوامر" />
         {pendingUpdate ? (
           <IconButton icon="download" bg={colors.gold} color={colors.navy} onPress={() => setUpdate(pendingUpdate)} accessibilityLabel="تحديث جديد" />
         ) : null}
@@ -1116,7 +1007,6 @@ function Main() {
           AsyncStorage.removeItem(K_OPS_APP).catch(() => {});
         }}
       />
-      <CommandScreen visible={showCmd} onClose={() => setShowCmd(false)} actions={appActions} />
       <AuditScreen
         state={audit}
         onClose={() => {

@@ -3,7 +3,7 @@ import { Modal, StyleSheet, View } from 'react-native';
 
 import { colors, radius, ROW } from './theme';
 import { Button, Icon, T } from './ui';
-import { downloadAndInstall, type Manifest } from './updater';
+import { downloadAndInstall, type Manifest, updateSizeMB } from './updater';
 
 export function UpdateModal({ manifest, onClose }: { manifest: Manifest | null; onClose: () => void }) {
   const [progress, setProgress] = useState<number | null>(null);
@@ -42,6 +42,9 @@ export function UpdateModal({ manifest, onClose }: { manifest: Manifest | null; 
             </View>
           ) : null}
 
+          {updateSizeMB(manifest) ? (
+            <T style={{ fontSize: 12, color: colors.muted, textAlign: 'center' }}>حجم التحديث: {updateSizeMB(manifest)} ميغابايت</T>
+          ) : null}
           {progress !== null ? (
             <View style={{ gap: 6 }}>
               <View style={styles.bar}>
