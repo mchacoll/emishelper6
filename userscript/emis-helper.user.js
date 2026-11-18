@@ -1,7 +1,7 @@
 // ==UserScript==
-// @name         مساعد EMIS – تعبئة تلقائية (v8.29.0)
+// @name         مساعد EMIS – تعبئة تلقائية (v8.30.0)
 // @namespace    emis-helper
-// @version      8.29.0
+// @version      8.30.0
 // @description  تعبئة تلقائية لـ EMIS + حفظ + «تمت المراجعة» + فتح «جديد» + نقل «الاحتياجات الخاصة» من EMIS إلى موقعك
 // @match        *://*/*
 // @grant        GM_setValue
@@ -316,7 +316,7 @@
     ui.dir = 'rtl';
 
     const head = mk('div', 'display:flex;justify-content:space-between;align-items:center;gap:8px');
-    head.appendChild(mk('b', 'font-size:13.5px;', title + ' v8.29.0'));
+    head.appendChild(mk('b', 'font-size:13.5px;', title + ' v8.30.0'));
     const minBtn = mk('button',
       'background:none;border:0;color:#fff;font-size:22px;' +
       'min-width:32px;min-height:32px;cursor:pointer;padding:0;line-height:1;', '−');
@@ -1836,7 +1836,10 @@
   const DEFAULT_RULE = SCHOOL_RULES.find(r => !clean(r.key)) || BUILTIN_RULES[BUILTIN_RULES.length - 1];
   function ruleFor(school) {
     const sn = norm(school);
-    return (sn && SCHOOL_RULES.find(r => clean(r.key) && sn.includes(norm(r.key)))) || DEFAULT_RULE;
+    // (v8.30) «التوحيد» يطابق أيضاً «مدرسة توحيد» / «مدرسه التوحید» (بدون «ال»، أو بحروف فارسية)
+    const noAl = k => clean(k).split(/\s+/).map(w => norm(w).replace(/^ال/, '')).join('');
+    const snNoAl = clean(String(school || '')).split(/\s+/).map(w => norm(w).replace(/^ال/, '')).join('');
+    return (sn && SCHOOL_RULES.find(r => clean(r.key) && (sn.includes(norm(r.key)) || (noAl(r.key).length >= 3 && snNoAl.includes(noAl(r.key)))))) || DEFAULT_RULE;
   }
   const FORM_SCHOOLS = SCHOOL_RULES.filter(r => clean(r.key)).map(r => r.key);   // أسماء المدارس المعرّفة (لاكتشاف الاسم في الصفحة)
   const formDriven = d => ruleFor(d && d.school).mode === 'form';
