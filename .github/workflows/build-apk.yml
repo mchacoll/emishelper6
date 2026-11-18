@@ -2,6 +2,18 @@ name: Build APK
 
 on:
   workflow_dispatch:
+  push:
+    branches: [main, 'claude/**']
+    paths-ignore: ['**.md']
+
+# بناء واحد في كل مرة: البناء الأحدث يلغي الأقدم، فلا يُنشر إصدار قديم بعد الأحدث
+# (كان «آخر إصدار» يصير القديم إذا انتهى بناؤه متأخراً، فلا يرى التطبيق التحديث)
+concurrency:
+  group: build-apk-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: write # لنشر الإصدار (التحديث من داخل التطبيق)
 
 jobs:
   build:
@@ -10,35 +22,124 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Unzip project
-        run: unzip -o emishelper-android-source-v3.zip
-
-      - uses: pnpm/action-setup@v4
-        with:
-          version: 9
+      - name: Build number
+        run: echo "BUILD_NUMBER=$((1000 + GITHUB_RUN_NUMBER))" >> "$GITHUB_ENV"
 
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-          cache: pnpm
+          cache: npm
+
+      # هل تغيّر كود التطبيق؟ إن تغيّر السكربت فقط فلا نبني APK جديداً:
+      # يُنشر السكربت وحده (بضع مئات من الكيلوبايت) ويحدّثه التطبيق بدون إعادة تثبيت
+      - name: Detect script-only change
+        run: |
+          APP_HASH=$(node -e '
+            const { execSync } = require("child_process"), crypto = require("crypto"), fs = require("fs");
+            const files = execSync("git ls-files", { encoding: "utf8" }).split("\n")
+              .filter(f => f && !/^(userscript\/|src\/userscript\.generated\.ts$|release\.json$)/.test(f) && !/\.md$/.test(f)).sort();
+            const h = crypto.createHash("sha256");
+            for (const f of files) {
+              let c = fs.readFileSync(f);
+              if (f === "app.json") { const j = JSON.parse(c); delete j.expo.version; if (j.expo.android) delete j.expo.android.versionCode; c = Buffer.from(JSON.stringify(j)); }
+              h.update(f + "\0"); h.update(c);
+            }
+            console.log(h.digest("hex").slice(0, 16));')
+          echo "APP_HASH=$APP_HASH" >> "$GITHUB_ENV"
+          mkdir -p out
+          curl -fsSL "https://github.com/${{ github.repository }}/releases/latest/download/version.json" -o out/prev.json || echo '{}' > out/prev.json
+          PREV_HASH=$(node -e 'try{console.log(require("./out/prev.json").appHash||"")}catch(e){console.log("")}')
+          if [ "${{ github.event_name }}" = "push" ] && [ -n "$PREV_HASH" ] && [ "$PREV_HASH" = "$APP_HASH" ]; then
+            echo "SCRIPT_ONLY=1" >> "$GITHUB_ENV"; echo "Script-only change: no APK build"
+          else
+            echo "SCRIPT_ONLY=0" >> "$GITHUB_ENV"; echo "App changed ($PREV_HASH -> $APP_HASH): full build"
+          fi
 
       - uses: actions/setup-java@v4
+        if: env.SCRIPT_ONLY != '1'
         with:
           distribution: temurin
           java-version: 17
 
       - name: Install dependencies
-        run: pnpm install --no-frozen-lockfile
+        run: npm ci
+
+      - name: Embed userscript + typecheck
+        run: |
+          npm run embed
+          npm run typecheck
 
       - name: Generate native Android project
+        if: env.SCRIPT_ONLY != '1'
         run: npx expo prebuild -p android --no-install
+        env:
+          EXPO_OFFLINE: '1'
 
-      - name: Build release APK
+      - name: Build release APKs
+        if: env.SCRIPT_ONLY != '1'
         working-directory: android
-        run: ./gradlew assembleRelease --no-daemon
+        run: ./gradlew assembleRelease --no-daemon -PreactNativeArchitectures=armeabi-v7a,arm64-v8a
+
+      - name: Collect APKs (new build)
+        if: env.SCRIPT_ONLY != '1'
+        run: |
+          D=android/app/build/outputs/apk/release
+          ls -la $D
+          cp $D/app-universal-release.apk out/emishelper.apk
+          cp $D/app-arm64-v8a-release.apk out/emishelper-arm64-v8a.apk
+          cp $D/app-armeabi-v7a-release.apk out/emishelper-armeabi-v7a.apk
+
+      - name: Reuse APKs (script-only)
+        if: env.SCRIPT_ONLY == '1'
+        run: |
+          for f in emishelper.apk emishelper-arm64-v8a.apk emishelper-armeabi-v7a.apk; do
+            curl -fsSL "https://github.com/${{ github.repository }}/releases/latest/download/$f" -o "out/$f" || rm -f "out/$f"
+          done
+          test -f out/emishelper.apk
+
+      - name: Prepare release files
+        run: |
+          cp userscript/emis-helper.user.js out/emis-helper.user.js
+          node -e '
+            const fs = require("fs");
+            const app = require("./app.json").expo;
+            const rel = JSON.parse(fs.readFileSync("release.json", "utf8"));
+            const prev = JSON.parse(fs.readFileSync("out/prev.json", "utf8"));
+            const sv = (fs.readFileSync("userscript/emis-helper.user.js", "utf8").match(/@version\s+([\d.]+)/) || [])[1];
+            const scriptOnly = process.env.SCRIPT_ONLY === "1";
+            const apkSizes = {};
+            for (const f of ["emishelper.apk", "emishelper-arm64-v8a.apk", "emishelper-armeabi-v7a.apk"])
+              if (fs.existsSync("out/" + f)) apkSizes[f] = fs.statSync("out/" + f).size;
+            const m = {
+              version: scriptOnly ? prev.version : app.version,
+              versionCode: scriptOnly ? prev.versionCode : Number(process.env.BUILD_NUMBER),
+              scriptVersion: sv, scriptMinBuild: rel.scriptMinBuild || 0, notes: rel.notes || [],
+              appHash: process.env.APP_HASH, apkSizes,
+            };
+            fs.writeFileSync("out/version.json", JSON.stringify(m, null, 2));
+            fs.writeFileSync("out/notes.md", (scriptOnly ? "تحديث السكربت فقط (v" + sv + ") — بدون تنزيل التطبيق\n\n" : "") + m.notes.map(n => "- " + n).join("\n") + "\n");
+            const tag = scriptOnly ? "v" + m.version + "-b" + m.versionCode + "-s" + process.env.BUILD_NUMBER : "v" + m.version + "-b" + m.versionCode;
+            fs.appendFileSync(process.env.GITHUB_ENV, "RELEASE_TAG=" + tag + "\n");
+            console.log(m);
+          '
+          rm -f out/prev.json
 
       - name: Upload APK
+        if: env.SCRIPT_ONLY != '1'
         uses: actions/upload-artifact@v4
         with:
           name: emishelper-apk
-          path: android/app/build/outputs/apk/release/*.apk
+          path: out/*.apk
+
+      - name: Publish release (in-app update)
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ env.RELEASE_TAG }}
+          name: بوابة EMIS ${{ env.RELEASE_TAG }}
+          target_commitish: ${{ github.sha }}
+          make_latest: 'true'
+          body_path: out/notes.md
+          files: |
+            out/*.apk
+            out/version.json
+            out/emis-helper.user.js

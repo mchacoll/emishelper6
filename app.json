@@ -1,0 +1,46 @@
+{
+  "expo": {
+    "name": "بوابة EMIS",
+    "slug": "emishelper",
+    "version": "8.31.0",
+    "orientation": "default",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "light",
+    "backgroundColor": "#0b1f4d",
+    "splash": {
+      "image": "./assets/splash-icon.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#0b1f4d"
+    },
+    "android": {
+      "package": "com.emishelper.app",
+      "versionCode": 8100,
+      "adaptiveIcon": {
+        "backgroundColor": "#3b5fdc",
+        "foregroundImage": "./assets/android-icon-foreground.png",
+        "backgroundImage": "./assets/android-icon-background.png",
+        "monochromeImage": "./assets/android-icon-monochrome.png"
+      },
+      "softwareKeyboardLayoutMode": "pan",
+      "predictiveBackGestureEnabled": false,
+      "permissions": [
+        "android.permission.REQUEST_INSTALL_PACKAGES"
+      ]
+    },
+    "ios": {
+      "bundleIdentifier": "com.emishelper.app",
+      "supportsTablet": true
+    },
+    "plugins": [
+      [
+        "expo-build-properties",
+        {
+          "android": {
+            "useLegacyPackaging": true
+          }
+        }
+      ],
+      "./plugins/withAbiSplits"
+    ]
+  }
+}
