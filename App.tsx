@@ -466,7 +466,7 @@ function Main() {
     if (upd.current && !send.current) return onUpdStatus(raw);
     const cur = send.current;
     if (!cur) return;
-    let st: { info?: string; saved?: boolean; ok?: number; miss?: string[]; dry?: boolean; rows?: PreviewRow[]; summary?: { stage: string; room: string; place: string; city: string; gender: string; idNumber: string } };
+    let st: { info?: string; saved?: boolean; ok?: number; miss?: string[]; dry?: boolean; rows?: PreviewRow[]; placeWarn?: string[]; summary?: { stage: string; room: string; place: string; city: string; gender: string; idNumber: string } };
     try {
       st = JSON.parse(raw);
     } catch {
@@ -504,7 +504,9 @@ function Main() {
             ]
           : []);
       const ageWarn = cur.issues.some(x => x.startsWith('العمر'));
-      lastPreview.current = { name: nm, rows, warn };
+      // (v8.31) المكان/المدينة لا يطابقان الاستمارة: تنبيه أحمر في الأعلى + تأكيد إضافي قبل الإرسال
+      const placeWarn = st.placeWarn || [];
+      lastPreview.current = { name: nm, rows, warn, placeWarn };
       setPreview({ ...lastPreview.current, age: ageWarn || cur.d.ageExceptionReason ? { required: false, value: String(cur.d.ageExceptionReason || '') } : undefined });
       return;
     }
@@ -537,7 +539,15 @@ function Main() {
     setPreview(null);
     endSend();
   };
-  const previewSend = (ageReason: string) => {
+  const previewSend = (ageReason: string, confirmed = false) => {
+    const pw = lastPreview.current?.placeWarn || [];
+    if (pw.length && !confirmed) {
+      Alert.alert('المكان لا يطابق الاستمارة', pw.join('\n\n') + '\n\nأرسله هكذا رغم ذلك؟', [
+        { text: 'لا، ألغِ', style: 'cancel' },
+        { text: 'أرسل رغم ذلك', style: 'destructive', onPress: () => previewSend(ageReason, true) },
+      ]);
+      return;
+    }
     setPreview(null);
     const cur = send.current;
     if (!cur) return;

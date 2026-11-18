@@ -1,7 +1,7 @@
 // ==UserScript==
-// @name         مساعد EMIS – تعبئة تلقائية (v8.30.0)
+// @name         مساعد EMIS – تعبئة تلقائية (v8.31.0)
 // @namespace    emis-helper
-// @version      8.30.0
+// @version      8.31.0
 // @description  تعبئة تلقائية لـ EMIS + حفظ + «تمت المراجعة» + فتح «جديد» + نقل «الاحتياجات الخاصة» من EMIS إلى موقعك
 // @match        *://*/*
 // @grant        GM_setValue
@@ -316,7 +316,7 @@
     ui.dir = 'rtl';
 
     const head = mk('div', 'display:flex;justify-content:space-between;align-items:center;gap:8px');
-    head.appendChild(mk('b', 'font-size:13.5px;', title + ' v8.30.0'));
+    head.appendChild(mk('b', 'font-size:13.5px;', title + ' v8.31.0'));
     const minBtn = mk('button',
       'background:none;border:0;color:#fff;font-size:22px;' +
       'min-width:32px;min-height:32px;cursor:pointer;padding:0;line-height:1;', '−');
@@ -3867,6 +3867,30 @@
     }
     const kids = n => { const r = n.children ?? n.items ?? n.subItems ?? n.childs; return Array.isArray(r) ? r : []; };
 
+    /* (v8.31) تنبيه قبل الإرسال إذا كان المكان الذي سيُكتب في EMIS يتبع محافظة غير محافظة الاستمارة،
+       أو كانت المدينة التي ستُكتب غير مدينة الاستمارة (مثل خطأ «خانقين» لطالب استمارته بغداد) */
+    function placeWarnings(tree, placeId, pl, d) {
+      const out = [];
+      const nm = v => norm(clean(String(v || '')).replace(/محافظة|محافظه/g, ''));
+      const same = (a, b) => { const x = nm(a), y = nm(b); return !!x && !!y && (x === y || x.includes(y) || y.includes(x)); };
+      const pathOf = (list, id, acc) => {
+        for (const x of list || []) {
+          const a = acc.concat(oTxt(x));
+          if (String(oVal(x)) === String(id)) return a;
+          const h = pathOf(kids(x), id, a);
+          if (h) return h;
+        }
+        return null;
+      };
+      const path = placeId ? pathOf(tree, placeId, []) || [] : [];
+      const emisGov = path.length > 1 && nm(path[0]).includes(nm('العراق')) ? path[1] : path[0] || '';
+      const formGov = clean(d && d.governorate), formCity = clean(d && d.citySite);
+      if (formGov && emisGov && !same(formGov, emisGov))
+        out.push('المحافظة في الاستمارة «' + formGov + '» لكن المكان الذي سيُكتب في EMIS «' + path.slice(1).join(' / ') + '» يتبع «' + emisGov + '»');
+      if (formCity && pl && clean(pl.city) && !same(formCity, pl.city))
+        out.push('المدينة في الاستمارة «' + formCity + '» لكن ستُكتب في EMIS «' + clean(pl.city) + '»');
+      return out;
+    }
     async function registerApi(d, log, dry) {
       const fail = why => { log('✖ ' + why); return { ok: 0, saved: false, miss: [why], api: true }; };
       const sm = location.pathname.match(/schools\/(\d+)/);
@@ -3928,6 +3952,7 @@
       // المكان: العراق ← ديالى ← خانقين ← مركز قضاء خانقين
       let nodes = unwrap(apiCache.tree || (apiCache.tree = await emisApi('/CountryStructure/getcountrystructure')));
       nodes = Array.isArray(nodes) ? nodes : [];
+      const treeAll = nodes;
       let placeId = null, depth = 0, placeName = '';
       if (pl.builtin) {
         for (const name of DEFAULTS.placeChain) {
@@ -3949,6 +3974,8 @@
         if (!hit) return fail('لم أجد المكان «' + [pl.gov, pl.text].filter(Boolean).join(' / ') + '» في EMIS');
         placeId = parseInt(oVal(hit), 10); placeName = oTxt(hit);
       }
+      // (v8.31) فحص المكان: محافظة المكان في EMIS والمدينة مقابل ما في الاستمارة
+      const placeWarn = placeWarnings(treeAll, placeId, pl, d);
       // الهوية
       const civil = isCivil(d);
       const digits = t => S(t).replace(/[\u0660-\u0669]/g, x => x.charCodeAt(0) - 0x660);
@@ -3981,7 +4008,7 @@
           latitude: 0, longitude: 0, schoolPhoneNumber: '', mobilePhoneNumber: '', email: '', website: '',
         },
       };
-      if (dry === 'build') return { payload, stageTxt: oTxt(stage) + (roomTxt ? ' ' + roomTxt : '') };
+      if (dry === 'build') return { payload, stageTxt: oTxt(stage) + (roomTxt ? ' ' + roomTxt : ''), placeWarn };
       // (v8.6) فحص فقط: كل شيء جاهز، لا نرسل
       if (dry) {
         log('✔ الفحص: جاهز للإرسال');
@@ -4008,7 +4035,7 @@
           ['الهاتف', S(d.phone), payload.homePhoneNumber],
           ['الرعاية الاجتماعية', S(d.welfare), payload.isCoveredBySocialWelfare ? 'نعم' : 'لا'],
         ];
-        return { ok: 1, dry: true, saved: false, miss: [], api: true, rows,
+        return { ok: 1, dry: true, saved: false, miss: [], api: true, rows, placeWarn,
           summary: { stage: oTxt(stage), room: roomTxt, place: placeName, city: pl.city, gender: gender === 2 ? 'أنثى' : 'ذكر', idNumber } };
       }
       log(`📤 إرسال: ${payload.name} ${payload.fatherName} ${payload.grandFatherName} · ${oTxt(stage)}${roomTxt ? ' ' + roomTxt : ''} · ${gender === 2 ? 'أنثى' : 'ذكر'}`);
@@ -4092,6 +4119,7 @@
       cmp('رقم الهوية', oldId, out.identification.idNumber);
       cmp('الهاتف', cur.homePhoneNumber, out.homePhoneNumber);
       if (String(cur.stageId) !== String(out.stageId) || String(cur.classRoomId ?? '') !== String(out.classRoomId ?? '')) changes.push('الصف/الشعبة: ← ' + b.stageTxt);
+      for (const w of b.placeWarn || []) changes.unshift('⚠ ' + w);
       if (opt.dry) {
         log('✔ وُجد في EMIS: ' + emisName);
         return { ok: 1, saved: false, upd: true, dry: true, match: { id: cur.id, name: emisName, idNumber: oldId }, changes };

@@ -7,7 +7,7 @@ import { Button, Icon, T } from './ui';
 
 export type PreviewRow = [label: string, form: string, emis: string];
 /** age: حقل «سبب استثناء العمر» — required عندما رفض EMIS بسبب العمر */
-export type Preview = { name: string; rows: PreviewRow[]; warn: string[]; age?: { required: boolean; note?: string; value?: string } };
+export type Preview = { name: string; rows: PreviewRow[]; warn: string[]; placeWarn?: string[]; age?: { required: boolean; note?: string; value?: string } };
 const AGE_REASONS = ['رسوب', 'تأخر في التسجيل', 'عائد من خارج العراق', 'انتقال من مدرسة أخرى', 'ظرف صحي'];
 
 // مقارنة مرنة: الهمزات والتاء المربوطة و«ال» والمسافات لا تُعد اختلافاً
@@ -51,6 +51,22 @@ export function PreviewModal(props: { preview: Preview | null; onCancel: () => v
                   </T>
                 </View>
               </View>
+
+              {p.placeWarn?.length ? (
+                <View style={styles.danger}>
+                  <View style={{ flexDirection: ROW, alignItems: 'center', gap: 6 }}>
+                    <Icon name="map-marker-alert" size={18} color={colors.red} />
+                    <T bold style={{ fontSize: 13, color: colors.red }}>
+                      المكان لا يطابق الاستمارة — تحقق قبل الإرسال
+                    </T>
+                  </View>
+                  {p.placeWarn.map(w => (
+                    <T key={w} style={{ fontSize: 12, color: colors.red, lineHeight: 19 }}>
+                      • {w}
+                    </T>
+                  ))}
+                </View>
+              ) : null}
 
               <View style={[styles.tr, styles.th]}>
                 <T bold style={[styles.c0, styles.thT]}>الحقل</T>
@@ -130,6 +146,7 @@ const styles = themed(() =>
   tr: { flexDirection: ROW, gap: 6, paddingVertical: 6, paddingHorizontal: 6, borderBottomWidth: 1, borderBottomColor: colors.border },
   th: { backgroundColor: colors.bg, borderRadius: radius.sm },
   thT: { fontSize: 11, color: colors.muted },
+  danger: { gap: 4, marginBottom: 8, padding: 10, borderRadius: radius.md, borderWidth: 1, borderColor: colors.red, backgroundColor: colors.redSoft },
   ageBox: { gap: 6, marginTop: 10, padding: 10, borderRadius: radius.md, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.bg },
   input: {
     backgroundColor: colors.card,
