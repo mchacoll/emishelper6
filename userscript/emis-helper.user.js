@@ -1,7 +1,7 @@
 // ==UserScript==
-// @name         مساعد EMIS – تعبئة تلقائية (v8.14.1)
+// @name         مساعد EMIS – تعبئة تلقائية (v8.17.0)
 // @namespace    emis-helper
-// @version      8.14.1
+// @version      8.17.0
 // @description  تعبئة تلقائية لـ EMIS + حفظ + «تمت المراجعة» + فتح «جديد» + نقل «الاحتياجات الخاصة» من EMIS إلى موقعك
 // @match        *://*/*
 // @grant        GM_setValue
@@ -316,7 +316,7 @@
     ui.dir = 'rtl';
 
     const head = mk('div', 'display:flex;justify-content:space-between;align-items:center;gap:8px');
-    head.appendChild(mk('b', 'font-size:13.5px;', title + ' v8.14.1'));
+    head.appendChild(mk('b', 'font-size:13.5px;', title + ' v8.17.0'));
     const minBtn = mk('button',
       'background:none;border:0;color:#fff;font-size:22px;' +
       'min-width:32px;min-height:32px;cursor:pointer;padding:0;line-height:1;', '−');
@@ -3472,7 +3472,7 @@
         fatherIdentification: null, specialNeeds: null,
         studyLanguage: sl ? oVal(sl) : DEFAULTS.studyLanguage, economicLevel: eco ? oVal(eco) : '',
         isCoveredBySocialWelfare: yes(d.welfare), isDroppedOutFromSchool: false, lastYearResult: 3,
-        schoolId, stageId, classRoomId, ageExceptionReason: null, genderExceptionReason: null,
+        schoolId, stageId, classRoomId, ageExceptionReason: S(d.ageExceptionReason) || null, genderExceptionReason: null,   // (v8.17) سبب استثناء العمر يكتبه المنسق
         address: {
           addressType: 1, countryStructureId: placeId, town: pl.city, area: S(d.neighborhood), quarter: S(d.mahalla), street: S(d.alley),
           apartmentNumber: '', buildingNumber: '', address1: '', address2: '', closestLocation: S(d.landmark) || '0',   // (v8.3.1) العنوان 1 و 2 فارغان بدل «0»
@@ -3567,7 +3567,8 @@
       if (!b || !b.payload) return { ...(b || {}), upd: true };
       const p = b.payload;
       for (const k of ['imageUrl', 'notes', 'censusNumber', 'isDisabled', 'specialNeeds', 'fatherIdentification', 'isDroppedOutFromSchool',
-        'lastYearResult', 'ageExceptionReason', 'genderExceptionReason', 'homeTown', 'maritalStatus']) delete p[k];
+        'lastYearResult', 'genderExceptionReason', 'homeTown', 'maritalStatus']) delete p[k];
+      if (!p.ageExceptionReason) delete p.ageExceptionReason;   // بدون سبب جديد يبقى سبب EMIS كما هو
       for (const k of ['latitude', 'longitude', 'schoolPhoneNumber', 'mobilePhoneNumber', 'email', 'website', 'apartmentNumber', 'buildingNumber', 'address1', 'address2']) delete p.address[k];
       for (const k of ['nameOfDocument', 'issuer', 'issuingDate']) delete p.identification[k];
       const dOnly = v => { const m = String(v || '').match(/^(\d{4})-(\d{1,2})-(\d{1,2})/); return m ? m[1] + '-' + m[2].padStart(2, '0') + '-' + m[3].padStart(2, '0') : null; };

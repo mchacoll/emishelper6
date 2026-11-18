@@ -1,11 +1,14 @@
-import { Modal, ScrollView, StyleSheet, View } from 'react-native';
+import { useEffect, useState } from 'react';
+import { Modal, Pressable, ScrollView, StyleSheet, TextInput, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
-import { colors, radius, ROW } from './theme';
+import { colors, fonts, radius, ROW } from './theme';
 import { Button, Icon, T } from './ui';
 
 export type PreviewRow = [label: string, form: string, emis: string];
-export type Preview = { name: string; rows: PreviewRow[]; warn: string[] };
+/** age: حقل «سبب استثناء العمر» — required عندما رفض EMIS بسبب العمر */
+export type Preview = { name: string; rows: PreviewRow[]; warn: string[]; age?: { required: boolean; note?: string; value?: string } };
+const AGE_REASONS = ['رسوب', 'تأخر في التسجيل', 'عائد من خارج العراق', 'انتقال من مدرسة أخرى', 'ظرف صحي'];
 
 // مقارنة مرنة: الهمزات والتاء المربوطة و«ال» والمسافات لا تُعد اختلافاً
 const n = (s: string) =>
@@ -25,8 +28,11 @@ const same = (a: string, b: string) => {
 };
 
 /** معاينة قبل الإرسال: ما في الاستمارة بجانب ما سيُكتب في EMIS */
-export function PreviewModal(props: { preview: Preview | null; onCancel: () => void; onSend: () => void }) {
+export function PreviewModal(props: { preview: Preview | null; onCancel: () => void; onSend: (ageReason: string) => void }) {
   const p = props.preview;
+  const [reason, setReason] = useState('');
+  useEffect(() => setReason(p?.age?.value || ''), [p]);
+  const needReason = !!p?.age?.required && !reason.trim();
   const changed = p ? p.rows.filter(r => r[1] && !same(r[1], r[2])).length : 0;
   return (
     <Modal visible={!!p} animationType="slide" transparent onRequestClose={props.onCancel}>
@@ -79,9 +85,33 @@ export function PreviewModal(props: { preview: Preview | null; onCancel: () => v
                 ))}
               </View>
 
+              {p.age ? (
+                <View style={styles.ageBox}>
+                  <T bold style={{ fontSize: 13, color: p.age.required ? colors.red : colors.text }}>
+                    سبب استثناء العمر{p.age.required ? ' (يطلبه EMIS)' : ' (اختياري)'}
+                  </T>
+                  {p.age.note ? <T style={{ fontSize: 11, color: colors.red }}>{p.age.note}</T> : null}
+                  <TextInput
+                    style={styles.input}
+                    value={reason}
+                    onChangeText={setReason}
+                    placeholder="اكتب السبب كما سيظهر في EMIS"
+                    placeholderTextColor={colors.muted}
+                    maxLength={200}
+                  />
+                  <View style={[styles.row, { flexWrap: 'wrap', gap: 6 }]}>
+                    {AGE_REASONS.map(r => (
+                      <Pressable key={r} onPress={() => setReason(r)} style={styles.chip}>
+                        <T style={{ fontSize: 11, color: colors.navy }}>{r}</T>
+                      </Pressable>
+                    ))}
+                  </View>
+                </View>
+              ) : null}
+
               <View style={[styles.row, { paddingTop: 10 }]}>
                 <Button kind="soft" label="إلغاء" onPress={props.onCancel} style={{ flex: 1 }} />
-                <Button kind="primary" icon="send" label="إرسال إلى EMIS" onPress={props.onSend} style={{ flex: 2 }} />
+                <Button kind="primary" icon="send" label="إرسال إلى EMIS" onPress={() => props.onSend(reason.trim())} style={{ flex: 2 }} disabled={needReason} />
               </View>
             </>
           ) : null}
@@ -99,6 +129,20 @@ const styles = StyleSheet.create({
   tr: { flexDirection: ROW, gap: 6, paddingVertical: 6, paddingHorizontal: 6, borderBottomWidth: 1, borderBottomColor: colors.border },
   th: { backgroundColor: colors.bg, borderRadius: radius.sm },
   thT: { fontSize: 11, color: colors.muted },
+  ageBox: { gap: 6, marginTop: 10, padding: 10, borderRadius: radius.md, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.bg },
+  input: {
+    backgroundColor: colors.card,
+    borderRadius: radius.sm,
+    borderWidth: 1,
+    borderColor: colors.border,
+    paddingHorizontal: 10,
+    paddingVertical: 7,
+    fontSize: 13,
+    color: colors.text,
+    textAlign: 'right',
+    fontFamily: fonts.regular,
+  },
+  chip: { paddingHorizontal: 8, paddingVertical: 4, borderRadius: 999, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.card },
   c0: { flex: 1.1, fontSize: 12 },
   c1: { flex: 1.4, fontSize: 12 },
   c2: { flex: 1.4, fontSize: 12 },

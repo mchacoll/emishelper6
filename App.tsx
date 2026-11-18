@@ -105,6 +105,7 @@ function Main() {
   const [pendingUpdate, setPendingUpdate] = useState<Manifest | null>(null); // يبقى زر التحديث ظاهراً بعد «لاحقاً»
   const [busyText, setBusyText] = useState('');
   const [preview, setPreview] = useState<Preview | null>(null);
+  const lastPreview = useRef<Preview | null>(null);
 
   const [ops, setOpsState] = useState<Op[]>([]);
   const opsRef = useRef<Op[]>([]);
@@ -465,11 +466,21 @@ function Main() {
               ['رقم الهوية', '', sm.idNumber],
             ]
           : []);
-      setPreview({ name: nm, rows, warn });
+      const ageWarn = cur.issues.some(x => x.startsWith('العمر'));
+      lastPreview.current = { name: nm, rows, warn };
+      setPreview({ ...lastPreview.current, age: ageWarn || cur.d.ageExceptionReason ? { required: false, value: String(cur.d.ageExceptionReason || '') } : undefined });
       return;
     }
 
     // نتيجة الإرسال
+    // (v8.17) رفض EMIS بسبب العمر ولم يُكتب سبب: نعيد المعاينة مع حقل «سبب استثناء العمر» إلزامي
+    if (!st.saved && !cur.d.ageExceptionReason && lastPreview.current && /عمر|العمر|استثناء|age/i.test(miss.join(' '))) {
+      if (sendTimer.current) clearTimeout(sendTimer.current);
+      setBusyText('');
+      cur.stage = 'check';
+      setPreview({ ...lastPreview.current, age: { required: true, note: 'رفض EMIS: ' + miss.join('، ') } });
+      return;
+    }
     endSend();
     if (st.saved && !miss.length) {
       doneKeys.current.add(cur.k);
@@ -489,10 +500,11 @@ function Main() {
     setPreview(null);
     endSend();
   };
-  const previewSend = () => {
+  const previewSend = (ageReason: string) => {
     setPreview(null);
     const cur = send.current;
     if (!cur) return;
+    if (ageReason) cur.d = { ...cur.d, ageExceptionReason: ageReason };
     cur.stage = 'send';
     setBusyText(`إرسال ${fullName(cur.d)} إلى EMIS...`);
     emisCmd('api', cur.d);
