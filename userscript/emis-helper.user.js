@@ -1,7 +1,7 @@
 // ==UserScript==
-// @name         مساعد EMIS – تعبئة تلقائية (v8.22.0)
+// @name         مساعد EMIS – تعبئة تلقائية (v8.23.0)
 // @namespace    emis-helper
-// @version      8.22.0
+// @version      8.23.0
 // @description  تعبئة تلقائية لـ EMIS + حفظ + «تمت المراجعة» + فتح «جديد» + نقل «الاحتياجات الخاصة» من EMIS إلى موقعك
 // @match        *://*/*
 // @grant        GM_setValue
@@ -316,7 +316,7 @@
     ui.dir = 'rtl';
 
     const head = mk('div', 'display:flex;justify-content:space-between;align-items:center;gap:8px');
-    head.appendChild(mk('b', 'font-size:13.5px;', title + ' v8.22.0'));
+    head.appendChild(mk('b', 'font-size:13.5px;', title + ' v8.23.0'));
     const minBtn = mk('button',
       'background:none;border:0;color:#fff;font-size:22px;' +
       'min-width:32px;min-height:32px;cursor:pointer;padding:0;line-height:1;', '−');
@@ -1911,6 +1911,21 @@
     return s;
   }
   const secNorm = x => norm((x || '').toString().normalize('NFKC')).replace(/[ھۀہ]/g, 'ه');
+  // (v8.23) مفاتيح موحّدة للصف والشعبة بين موقع الطلاب و EMIS («الأول» = «الاول الابتدائي»، «أ» = «A»)
+  const gradeKey = v => {
+    const n = gradeOrdinal(v);
+    if (!n) return gnorm(v) || '-';
+    const g = gnorm(v);
+    const st = GRADE_STAGE.find(w => g.includes(w) && w !== 'ابتد') || (GRADE_BRANCH.some(b => g.includes(b)) ? 'اعداد' : '');
+    return n + st;
+  };
+  const roomKey = v => {
+    let k = secNorm(clean(String(v || '')).replace(/^(الشعبة|شعبة)\s*/, ''));
+    if (/^[a-e]$/.test(k)) k = SECTION_ALT[k];
+    return k || '-';
+  };
+  const genderKey = v => (v === 1 || v === '1' ? 'm' : v === 2 || v === '2' ? 'f'
+    : genderOf(v && typeof v === 'object' ? (v.name || v.text || v.label || '') : String(v ?? '')));
   function sectionCandidates(v, school) {
     const s = clean(v).replace(/^(الشعبة|شعبة)\s*/, '').trim();
     if (!s) return null;
@@ -2812,6 +2827,69 @@
     }
     window.__emisFixSite = (id, phone, card) => { fixSiteApi(Number(id), phone || '', card || ''); return true; };
 
+    /* (v8.23) إحصاء موقع الطلاب: العدد لكل صف وشعبة، ذكور وإناث */
+    async function siteStatsApi() {
+      const out = o => gmSet('emis_stats_v1', JSON.stringify({ source: 'site', ...o, t: Date.now() }));
+      try {
+        const me = await trpc('school.me');
+        if (!me || !me.slug) throw new Error('سجّل دخول المنسق في موقع الطلاب');
+        const list = (await trpc('student.listForSchool', { schoolSlug: me.slug })) || [];
+        const g = {};
+        for (const rec of list) {
+          if (!rec || typeof rec !== 'object') continue;
+          const d = recordToData(rec, me.name);
+          const k = gradeKey(d.grade) + '|' + roomKey(d.section);
+          const x = g[k] || (g[k] = { key: k, grade: d.grade || '—', room: d.section || '', m: 0, f: 0, u: 0 });
+          const sx = genderKey(d.gender);
+          if (sx === 'm') x.m++; else if (sx === 'f') x.f++; else x.u++;
+        }
+        out({ running: false, done: list.length, total: list.length, groups: Object.values(g), school: me.name });
+      } catch (e) { out({ running: false, error: (e && e.message) || String(e) }); }
+    }
+    window.__emisSiteStats = () => { siteStatsApi(); return true; };
+
+    /* (v8.23) نقل طالب: قائمة الطلاب للاختيار، ثم تغيير الصف/الشعبة في استمارة الموقع */
+    async function siteStudentsApi() {
+      const out = o => gmSet('emis_site_students_v1', JSON.stringify({ ...o, t: Date.now() }));
+      try {
+        const me = await trpc('school.me');
+        if (!me || !me.slug) throw new Error('سجّل دخول المنسق في موقع الطلاب');
+        const list = (await trpc('student.listForSchool', { schoolSlug: me.slug })) || [];
+        const rows = [];
+        for (const rec of list) {
+          if (!rec || typeof rec !== 'object') continue;
+          const d = recordToData(rec, me.name);
+          rows.push({
+            id: rec.id, grade: d.grade || '', section: d.section || '',
+            name: [d.name, d.father, d.grandfather, d.greatGrandfather].filter(Boolean).join(' '),
+            n: { name: d.name || '', father: d.father || '', grandfather: d.grandfather || '', greatGrandfather: d.greatGrandfather || '' },
+          });
+        }
+        out({ ok: true, list: rows });
+      } catch (e) { out({ ok: false, error: (e && e.message) || String(e) }); }
+    }
+    window.__emisSiteStudents = () => { siteStudentsApi(); return true; };
+    async function siteMoveApi(id, grade, section) {
+      const res = o => gmSet('emis_move_v1', JSON.stringify({ source: 'site', id, ...o, t: Date.now() }));
+      try {
+        const me = await trpc('school.me');
+        const list = await trpc('student.listForSchool', { schoolSlug: me.slug });
+        const rec = (list || []).find(x => x && x.id === id);
+        if (!rec) throw new Error('لم أجد الطالب في قائمة المدرسة');
+        let t = {};
+        try { t = JSON.parse(rec.details || '{}'); } catch { /* ignore */ }
+        if ('grade' in t) t.grade = grade;      // بعض الاستمارات تحفظ الصف/الشعبة داخل details أيضاً
+        if ('branch' in t) t.branch = section;
+        if ('section' in t) t.section = section;
+        await trpc('student.updateAdmin', {
+          schoolId: rec.schoolId ?? me.id, id: rec.id, fullName: rec.fullName, grade, section,
+          details: JSON.stringify(t),
+        }, true);
+        res({ ok: true });
+      } catch (e) { res({ ok: false, error: (e && e.message) || String(e) }); }
+    }
+    window.__emisSiteMove = (id, grade, section) => { siteMoveApi(Number(id), String(grade || ''), String(section || '')); return true; };
+
     /* ---------- (v8.3) زر «إرسال إلى EMIS» في موقع الطلاب ----------
        الزر في الموقع علامة فقط (data-action="send-to-emis")، والمساعد هو من يقرأ الطالب
        ويطلب تسجيله مباشرة في EMIS (التطبيق، أو تبويب EMIS على الحاسبة) */
@@ -3407,6 +3485,113 @@
       } catch (e) { res({ ok: false, error: (e && e.message) || String(e) }); }
     }
     window.__emisFixContact = (id, phone, card) => { fixContactApi(Number(id), phone || '', card || ''); return true; };
+
+    /* (v8.23) إحصاء EMIS: العدد لكل صف وشعبة، ذكور وإناث
+       الجنس من قائمة EMIS إن وُجد فيها، وإلا من سجل الطالب (كما في التطبيق الأول) */
+    let statsBusy = false;
+    async function emisStatsApi() {
+      if (statsBusy) return;
+      statsBusy = true;
+      window.__emisStatsStop = false;
+      const out = o => gmSet('emis_stats_v1', JSON.stringify({ source: 'emis', ...o, t: Date.now() }));
+      try {
+        const sm = location.pathname.match(/schools\/(\d+)/);
+        if (!sm) throw new Error('افتح «إدارة الطلاب» للمدرسة في EMIS أولاً');
+        out({ running: true, done: 0, total: 0 });
+        const list = [];
+        for (let page = 1; page <= 20; page++) {
+          const q = new URLSearchParams({ page: String(page), rowsPerPage: '3000', sortBy: 'id', sortOrder: 'desc', entityId: sm[1] });
+          const j = await emisApi('/student/getstudents?' + q);
+          const data = (j && j.data) || [];
+          list.push(...data.filter(x => x && x.id != null));
+          const total = j && j.meta && j.meta.totalCount;
+          if (!data.length || (total ? page * 3000 >= total : data.length < 3000)) break;
+        }
+        const txt = v => clean(String(v && typeof v === 'object' ? (v.name || v.text || v.label || '') : (v ?? '')));
+        const g = {};
+        let done = 0, idx = 0;
+        const add = (sum, sx) => {
+          const grade = txt(sum.studentStage || sum.stageName || sum.stage), room = txt(sum.classRoomName || sum.classRoom);
+          const k = gradeKey(grade) + '|' + roomKey(room);
+          const x = g[k] || (g[k] = { key: k, grade: grade || '—', room, m: 0, f: 0, u: 0 });
+          if (sx === 'm') x.m++; else if (sx === 'f') x.f++; else x.u++;
+        };
+        const worker = async () => {
+          while (idx < list.length && !window.__emisStatsStop) {
+            const sum = list[idx++];
+            let sx = genderKey(sum.gender ?? sum.genderName ?? sum.genderText ?? sum.studentGender);
+            if (!sx) {
+              try { const st = unwrap(await emisApi('/student/getstudent/' + sum.id)); sx = genderKey(st && st.gender); } catch { /* ignore */ }
+              await new Promise(r => setTimeout(r, 60));
+            }
+            add(sum, sx);
+            done++;
+            if (done % 10 === 0 || done === list.length) out({ running: true, done, total: list.length });
+          }
+        };
+        await Promise.all([worker(), worker(), worker()]);
+        out({ running: false, done, total: list.length, stopped: !!window.__emisStatsStop, groups: Object.values(g) });
+      } catch (e) {
+        out({ running: false, error: (e && e.message) || String(e) });
+      } finally { statsBusy = false; }
+    }
+    window.__emisStats = () => { emisStatsApi(); return true; };
+
+    /* (v8.23) نقل طالب إلى صف/شعبة أخرى في EMIS — مطابقة رباعية صارمة، والصف والشعبة كما في التسجيل */
+    async function emisMoveApi(n, grade, section, dry) {
+      const res = o => gmSet('emis_move_v1', JSON.stringify({ source: 'emis', dry: !!dry, ...o, t: Date.now() }));
+      try {
+        const sm = location.pathname.match(/schools\/(\d+)/);
+        if (!sm) throw new Error('افتح «إدارة الطلاب» للمدرسة في EMIS أولاً');
+        const schoolId = +sm[1];
+        const L = v => norm(clean(String(v ?? ''))).replace(/[^\u0621-\u064A\u0671-\u06D5]/g, '');
+        if (!L(n.name) || !L(n.father) || !L(n.grandfather) || !L(n.greatGrandfather)) throw new Error('الاسم الرباعي ناقص في الاستمارة (جد الأب) — لا أستطيع إيجاده في EMIS بأمان');
+        // الصف والشعبة الجديدان في EMIS
+        const stages = await optList('/selectoption/getAvailableStagesForStudent?schoolId=' + schoolId);
+        const gC = gradeCandidates(grade);
+        const stage = gC ? optPick(stages, gC) : null;
+        if (!stage) throw new Error('الصف «' + grade + '» غير موجود في صفوف المدرسة في EMIS');
+        const stageId = parseInt(oVal(stage), 10);
+        let classRoomId = null, roomTxt = '';
+        const sec = sectionValue(section);
+        if (sec) {
+          const rooms = await optList('/selectoption/getClassRooms?schoolId=' + schoolId + '&stageId=' + stageId);
+          const room = rooms.find(x => roomKey(oTxt(x)) === roomKey(sec));
+          if (!room) throw new Error('الشعبة «' + sec + '» غير موجودة في EMIS لهذا الصف (' + rooms.map(oTxt).join('، ') + ')');
+          classRoomId = parseInt(oVal(room), 10); roomTxt = oTxt(room);
+        }
+        // الطالب في EMIS
+        const key = L(n.name) + L(n.father) + L(n.grandfather) + L(n.greatGrandfather);
+        const cands = [];
+        for (let page = 1; page <= 20; page++) {
+          const q = new URLSearchParams({ page: String(page), rowsPerPage: '3000', sortBy: 'id', sortOrder: 'desc', entityId: String(schoolId) });
+          const j = await emisApi('/student/getstudents?' + q);
+          const data = (j && j.data) || [];
+          for (const st of data) if (L(st.fullName).startsWith(key)) cands.push(st.id);
+          const total = j && j.meta && j.meta.totalCount;
+          if (!data.length || (total ? page * 3000 >= total : data.length < 3000)) break;
+        }
+        if (cands.length > 8) throw new Error('أسماء كثيرة متشابهة في EMIS — انقله يدوياً');
+        const hits = [];
+        for (const id of cands) {
+          const st = unwrap(await emisApi('/student/getstudent/' + id));
+          if (st && st.id && L(st.name) === L(n.name) && L(st.fatherName) === L(n.father) &&
+            L(st.grandFatherName) === L(n.grandfather) && L(st.fathersGrandFatherName) === L(n.greatGrandfather)) hits.push(st);
+        }
+        if (!hits.length) return res({ ok: false, notFound: true });
+        if (hits.length > 1) throw new Error('يوجد ' + hits.length + ' طلاب بنفس الاسم الرباعي في EMIS — انقله يدوياً');
+        const cur = hits[0];
+        const emisName = [cur.name, cur.fatherName, cur.grandFatherName, cur.fathersGrandFatherName, cur.surName].map(v => clean(String(v ?? ''))).filter(Boolean).join(' ');
+        if (dry) return res({ ok: true, emisName, toStage: oTxt(stage), toRoom: roomTxt });
+        const dOnly = v => { const m = String(v || '').match(/^(\d{4})-(\d{1,2})-(\d{1,2})/); return m ? m[1] + '-' + m[2].padStart(2, '0') + '-' + m[3].padStart(2, '0') : null; };
+        const out = { ...cur, dateOfBirth: dOnly(cur.dateOfBirth), stageId, classRoomId, identification: { ...(cur.identification || {}) } };
+        out.identification.issuingDate = dOnly(out.identification.issuingDate);
+        if (out.fatherIdentification && out.fatherIdentification.issuingDate) out.fatherIdentification = { ...out.fatherIdentification, issuingDate: dOnly(out.fatherIdentification.issuingDate) };
+        await emisApi('/student/updatestudent', out);
+        res({ ok: true, emisName, toStage: oTxt(stage), toRoom: roomTxt });
+      } catch (e) { res({ ok: false, error: (e && e.message) || String(e) }); }
+    }
+    window.__emisMove = (n, grade, section, dry) => { emisMoveApi(n || {}, String(grade || ''), String(section || ''), !!dry); return true; };
 
     const api = createBar('مساعد EMIS',
       ui => guarded(ui, async () => {

@@ -11,6 +11,8 @@ import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
 import WebView, { type WebViewMessageEvent, type WebViewNavigation } from 'react-native-webview';
 
 import { type AuditRow, AuditScreen, type AuditState, auditToRows } from './src/AuditScreen';
+import { type StatRow, StatsScreen, type StatsState, statsToRows } from './src/StatsScreen';
+import { type SiteStudent, TransferScreen, type TransferState } from './src/TransferScreen';
 import { PreviewModal, type Preview, type PreviewRow } from './src/PreviewModal';
 import { buildInjection, desktopViewportJs, diagnoseListJs, hostOf, parseBridgeMessage, remoteSetJs, syncAndBootJs } from './src/bridge';
 import { type CmpItem, type CompareState, CompareScreen } from './src/CompareScreen';
@@ -96,6 +98,11 @@ function Main() {
   const [audit, setAudit] = useState<AuditState>({ visible: false, running: false, source: 'emis', done: 0, total: 0 });
   const auditTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [fixing, setFixing] = useState<number | null>(null);
+  const [stats, setStats] = useState<StatsState>({ visible: false, site: { running: false }, emis: { running: false } });
+  const [transfer, setTransfer] = useState<TransferState>({ visible: false, loading: false, list: [] });
+  const [moving, setMoving] = useState<number | null>(null);
+  const moveRef = useRef<{ s: SiteStudent; grade: string; section: string; emisMoved: boolean } | null>(null);
+  const moveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const fixTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [errors, setErrors] = useState<LogLine[]>([]);
   const [reloadKey, setReloadKey] = useState({ site: 0, emis: 0 });
@@ -667,6 +674,21 @@ function Main() {
           return;
         case 'act': {
           if (m.ok) return;
+          if (m.action === 'stats:site' || m.action === 'stats:emis') {
+            const src = m.action === 'stats:site' ? 'site' : 'emis';
+            setStats(x => ({ ...x, [src]: { running: false, error: src === 'site' ? 'افتح صفحة المنسق في موقع الطلاب' : 'سجّل الدخول وافتح «إدارة الطلاب» في EMIS' } }));
+            return;
+          }
+          if (m.action === 'students:site') {
+            setTransfer(t => ({ ...t, loading: false, error: 'افتح صفحة المنسق في موقع الطلاب' }));
+            return;
+          }
+          if (m.action === 'move:site' || m.action === 'move:emis') {
+            const emisMoved = moveRef.current?.emisMoved;
+            endMove();
+            Alert.alert('لم يُنقل', m.action === 'move:site' ? 'افتح صفحة المنسق في موقع الطلاب' + (emisMoved ? '\n\nتنبيه: نُقل في EMIS.' : '') : 'افتح «إدارة الطلاب» في EMIS');
+            return;
+          }
           if (m.action === 'fix:emis' || m.action === 'fix:site') {
             if (fixTimer.current) clearTimeout(fixTimer.current);
             setFixing(null);
@@ -698,8 +720,19 @@ function Main() {
           if (pane === 'site') {
             // طلب زر «إرسال إلى EMIS»: يتولاه التطبيق فقط (لا يُمرَّر لـ EMIS حتى لا يُسجَّل مرتين)
             if (m.k === K_SEND) return void (str && onSendRequest(str));
+            if (m.k === 'emis_site_students_v1') {
+              try {
+                const r = JSON.parse(str || '{}');
+                setTransfer(t => ({ ...t, loading: false, list: r.list || [], error: r.ok ? undefined : r.error || 'تعذّرت القراءة' }));
+              } catch {
+                /* ignore */
+              }
+              return;
+            }
             if (m.k === K_AUDIT) return void (str && onAudit(str));
             if (m.k === 'emis_fix_v1') return void (str && onFixResult(str));
+            if (m.k === 'emis_stats_v1') return void (str && onStats(str));
+            if (m.k === 'emis_move_v1') return void (str && onMoveResult(str));
             if (m.k === K_UPD) return void (str && onUpdRequest(str));
             if (m.k === K_CMP) return void (str && onCompareResult(str));
             if (m.k === K_MARKMANY) return void (str && onMarkManyProgress(str));
@@ -718,6 +751,8 @@ function Main() {
             if (m.k === K_GSTAT) return void (str && onGenericStatus(str));
             if (m.k === K_AUDIT) return void (str && onAudit(str));
             if (m.k === 'emis_fix_v1') return void (str && onFixResult(str));
+            if (m.k === 'emis_stats_v1') return void (str && onStats(str));
+            if (m.k === 'emis_move_v1') return void (str && onMoveResult(str));
             if (m.k === K_EXIST) return void (str && onEmisList(str));
             // نتيجة EMIS لا تُرسل لموقع الطلاب (حتى لا يحدد «تمت المراجعة» لطالب آخر مفتوح هناك)
             if (m.k === K_STATUS) return void (str && onEmisStatus(str));
@@ -854,6 +889,127 @@ function Main() {
       ),
     }));
   };
+  /* ===================== إحصاء المدرسة (الموقع و EMIS) ===================== */
+  const startStats = () => {
+    setStats({ visible: true, site: { running: true }, emis: { running: true } });
+    injectAct('site', '!!window.__emisSiteStats&&window.__emisSiteStats()', 'stats:site');
+    injectAct('emis', '!!window.__emisStats&&window.__emisStats()', 'stats:emis');
+  };
+  const onStats = (raw: string) => {
+    let r: { source: 'site' | 'emis'; school?: string } & StatsState['site'];
+    try {
+      r = JSON.parse(raw);
+    } catch {
+      return;
+    }
+    setStats(x => ({ ...x, ...(r.school ? { school: r.school } : {}), [r.source]: { ...r, running: !!r.running } }));
+  };
+  const exportStats = async (rows: StatRow[]) => {
+    try {
+      const { headers, rows: data } = statsToRows(rows);
+      const uri = (FileSystem.cacheDirectory || '') + 'school-stats.xlsx';
+      await FileSystem.writeAsStringAsync(uri, toXlsxBase64(headers, data, 'الإحصاء'), { encoding: FileSystem.EncodingType.Base64 });
+      await Sharing.shareAsync(uri, { mimeType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', dialogTitle: 'إحصاء المدرسة' });
+    } catch (e) {
+      Alert.alert('تعذّر التصدير', (e as Error)?.message || '');
+    }
+  };
+
+  /* ===================== نقل طالب (EMIS أولاً ثم موقع الطلاب) ===================== */
+  const loadTransfer = () => {
+    setTransfer(t => ({ ...t, visible: true, loading: true, error: undefined }));
+    injectAct('site', '!!window.__emisSiteStudents&&window.__emisSiteStudents()', 'students:site');
+  };
+  const endMove = () => {
+    moveRef.current = null;
+    setMoving(null);
+    if (moveTimer.current) clearTimeout(moveTimer.current);
+  };
+  const armMove = () => {
+    if (moveTimer.current) clearTimeout(moveTimer.current);
+    moveTimer.current = setTimeout(() => {
+      const emisMoved = moveRef.current?.emisMoved;
+      endMove();
+      Alert.alert('لم يصل رد', emisMoved ? 'نُقل في EMIS، لكن لم يصل رد من موقع الطلاب — تحقق من الصف والشعبة في الموقع.' : 'تحقق من «إدارة الطلاب» في EMIS وصفحة المنسق ثم أعد المحاولة.');
+    }, 60000);
+  };
+  const siteMove = () => {
+    const m = moveRef.current;
+    if (!m) return;
+    armMove();
+    injectAct('site', `!!window.__emisSiteMove&&window.__emisSiteMove(${m.s.id},${JSON.stringify(m.grade)},${JSON.stringify(m.section)})`, 'move:site');
+  };
+  const startMove = (st: SiteStudent, grade: string, section: string) => {
+    if (moveRef.current) return;
+    moveRef.current = { s: st, grade, section, emisMoved: false };
+    setMoving(st.id);
+    armMove();
+    injectAct('emis', `!!window.__emisMove&&window.__emisMove(${JSON.stringify(st.n)},${JSON.stringify(grade)},${JSON.stringify(section)},true)`, 'move:emis');
+  };
+  const onMoveResult = (raw: string) => {
+    const m = moveRef.current;
+    if (!m) return;
+    let r: { source: 'site' | 'emis'; dry?: boolean; ok: boolean; notFound?: boolean; error?: string; emisName?: string; toStage?: string; toRoom?: string };
+    try {
+      r = JSON.parse(raw);
+    } catch {
+      return;
+    }
+    if (moveTimer.current) clearTimeout(moveTimer.current);
+    const to = [m.grade, m.section || 'بدون شعبة'].join(' · ');
+    const from = [m.s.grade, m.s.section || 'بدون شعبة'].join(' · ');
+    const pseudo = { ...m.s.n, grade: m.grade, section: m.section } as StudentData;
+    if (r.source === 'emis' && r.dry) {
+      if (r.ok) {
+        Alert.alert(
+          'نقل الطالب',
+          `${m.s.name}\n\nمن: ${from}\nإلى: ${to}\n\nفي EMIS: ${r.emisName}\n← ${[r.toStage, r.toRoom || 'بدون شعبة'].join(' · ')}\n\nسيُنقل في EMIS وفي موقع الطلاب.`,
+          [
+            { text: 'إلغاء', style: 'cancel', onPress: endMove },
+            {
+              text: 'نقل',
+              onPress: () => {
+                armMove();
+                injectAct('emis', `!!window.__emisMove&&window.__emisMove(${JSON.stringify(m.s.n)},${JSON.stringify(m.grade)},${JSON.stringify(m.section)},false)`, 'move:emis');
+              },
+            },
+          ],
+          { cancelable: false },
+        );
+      } else if (r.notFound) {
+        Alert.alert('غير موجود في EMIS', `${m.s.name}\nلم أجده في EMIS بالاسم الرباعي.\n\nنقله في موقع الطلاب فقط (${to})؟`, [
+          { text: 'إلغاء', style: 'cancel', onPress: endMove },
+          { text: 'في الموقع فقط', onPress: siteMove },
+        ]);
+      } else {
+        endMove();
+        Alert.alert('لا يمكن النقل', r.error || 'سبب غير معروف');
+      }
+      return;
+    }
+    if (r.source === 'emis') {
+      if (!r.ok) {
+        endMove();
+        logOp(pseudo, m.s.id, '', false, 'نقل: ' + (r.error || ''));
+        return void Alert.alert('لم يُنقل في EMIS', (r.error || 'سبب غير معروف') + '\n\nلم يتغيّر شيء في موقع الطلاب.');
+      }
+      m.emisMoved = true;
+      emisStale.current = true;
+      siteMove();
+      return;
+    }
+    // موقع الطلاب
+    const emisMoved = m.emisMoved;
+    endMove();
+    if (!r.ok) {
+      logOp(pseudo, m.s.id, '', false, 'نقل في الموقع: ' + (r.error || ''));
+      return void Alert.alert('لم يُنقل في موقع الطلاب', (r.error || '') + (emisMoved ? '\n\nتنبيه: نُقل في EMIS. عدّل الصف/الشعبة في الموقع يدوياً.' : ''));
+    }
+    logOp(pseudo, m.s.id, '', true, `نقل: ${from} ← ${to}${emisMoved ? '' : ' (الموقع فقط)'}`);
+    toast(`✅ نُقل ${m.s.n.name} إلى ${to}${emisMoved ? ' في EMIS والموقع' : ' في الموقع'}`);
+    setTransfer(t => ({ ...t, list: t.list.map(x => (x.id === m.s.id ? { ...x, grade: m.grade, section: m.section } : x)) }));
+  };
+
   const exportAudit = async (rows: AuditRow[]) => {
     try {
       const { headers, rows: data } = auditToRows(rows);
@@ -1036,6 +1192,14 @@ function Main() {
           setShowSettings(false);
           startAudit(src);
         }}
+        onStats={() => {
+          setShowSettings(false);
+          startStats();
+        }}
+        onTransfer={() => {
+          setShowSettings(false);
+          loadTransfer();
+        }}
         opsCount={ops.length}
         onDiagnose={() => {
           setShowSettings(false);
@@ -1082,6 +1246,22 @@ function Main() {
         onExport={exportAudit}
         fixing={fixing}
         onFix={fixAudit}
+      />
+      <StatsScreen
+        state={stats}
+        onClose={() => {
+          if (stats.emis.running) emisRef.current?.injectJavaScript('window.__emisStatsStop=true;true;');
+          setStats(x => ({ ...x, visible: false }));
+        }}
+        onRefresh={startStats}
+        onExport={exportStats}
+      />
+      <TransferScreen
+        state={transfer}
+        busyId={moving}
+        onClose={() => setTransfer(t => ({ ...t, visible: false }))}
+        onReload={loadTransfer}
+        onMove={startMove}
       />
       <UpdateModal manifest={update} onClose={() => setUpdate(null)} />
       <CompareScreen
