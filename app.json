@@ -2,7 +2,7 @@
   "expo": {
     "name": "بوابة EMIS",
     "slug": "emishelper",
-    "version": "8.15.1",
+    "version": "8.15.2",
     "orientation": "default",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "light",

@@ -122,7 +122,8 @@ const textOf = (m: Anthropic.Beta.BetaMessage) =>
     .trim();
 
 export type Provider = 'claude' | 'gemini';
-export const providerOf = (key: string): Provider => (key.trim().startsWith('AIza') ? 'gemini' : 'claude');
+// مفاتيح Claude تبدأ بـ sk-ant-؛ أي مفتاح آخر نعامله كمفتاح Google (AIza... أو الشكل الجديد AQ....)
+export const providerOf = (key: string): Provider => (key.trim().startsWith('sk-ant-') ? 'claude' : 'gemini');
 
 /** يرسل الأمر ويشغّل الأدوات حتى ينتهي، ويعيد الرد والمحادثة الجديدة (Claude أو Gemini حسب نوع المفتاح) */
 export async function runCommand(

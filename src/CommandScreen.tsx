@@ -127,7 +127,7 @@ export function CommandScreen(props: { visible: boolean; onClose: () => void; ac
               <Icon name="key-variant" size={40} color={colors.navy} />
               <T bold style={{ fontSize: 16, textAlign: 'center' }}>مفتاح الذكاء الاصطناعي</T>
               <T style={{ fontSize: 12, color: colors.muted, textAlign: 'center', lineHeight: 20 }}>
-                مجاني: Google Gemini — من aistudio.google.com ← Get API key (يبدأ بـ AIza).{'\n'}
+                مجاني: Google Gemini — من aistudio.google.com ← Get API key.{'\n'}
                 مدفوع: Claude — من console.anthropic.com ← API Keys (يبدأ بـ sk-ant-).{'\n'}
                 يعرف التطبيق النوع من المفتاح نفسه، ويحفظه مشفّراً في هذا الهاتف فقط.
               </T>
@@ -135,7 +135,7 @@ export function CommandScreen(props: { visible: boolean; onClose: () => void; ac
                 style={[styles.input, { alignSelf: 'stretch' }]}
                 value={keyDraft}
                 onChangeText={setKeyDraft}
-                placeholder="AIza... أو sk-ant-..."
+                placeholder="الصق المفتاح هنا"
                 placeholderTextColor={colors.muted}
                 autoCapitalize="none"
                 autoCorrect={false}
