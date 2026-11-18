@@ -1,7 +1,7 @@
 // ==UserScript==
-// @name         مساعد EMIS – تعبئة تلقائية (v8.23.0)
+// @name         مساعد EMIS – تعبئة تلقائية (v8.25.0)
 // @namespace    emis-helper
-// @version      8.23.0
+// @version      8.25.0
 // @description  تعبئة تلقائية لـ EMIS + حفظ + «تمت المراجعة» + فتح «جديد» + نقل «الاحتياجات الخاصة» من EMIS إلى موقعك
 // @match        *://*/*
 // @grant        GM_setValue
@@ -316,7 +316,7 @@
     ui.dir = 'rtl';
 
     const head = mk('div', 'display:flex;justify-content:space-between;align-items:center;gap:8px');
-    head.appendChild(mk('b', 'font-size:13.5px;', title + ' v8.23.0'));
+    head.appendChild(mk('b', 'font-size:13.5px;', title + ' v8.25.0'));
     const minBtn = mk('button',
       'background:none;border:0;color:#fff;font-size:22px;' +
       'min-width:32px;min-height:32px;cursor:pointer;padding:0;line-height:1;', '−');
@@ -1820,6 +1820,7 @@
     { key: 'ابن بطوطة', mode: 'form' },
     { key: 'ميثم التمار', mode: 'form' },
     { key: 'مثيم التمار', mode: 'form' },
+    { key: 'التوحيد', mode: 'form' },   // (v8.25) المكان والمدينة من الاستمارة (بغداد)
     { key: '', mode: 'fixed', gov: DEFAULTS.placeChain[1], place: DEFAULTS.place, city: DEFAULTS.city, lang: DEFAULTS.studyLanguage },
   ];
   const SCHOOL_RULES = (Array.isArray(window.__EMIS_SCHOOL_RULES) && window.__EMIS_SCHOOL_RULES.length) ? window.__EMIS_SCHOOL_RULES : BUILTIN_RULES;

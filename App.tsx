@@ -177,6 +177,14 @@ function Main() {
           loaded.phoneV1 = true;
           AsyncStorage.setItem(K_SETTINGS, JSON.stringify(loaded)).catch(() => {});
         }
+        // (v8.25) مدرسة التوحيد: المكان والمدينة حسب الاستمارة (بغداد) بدل الافتراضي (خانقين) — مرة واحدة
+        if (!loaded.schoolsV2) {
+          const list = normalizedSchools(loaded.schools);
+          if (!list.some(r => r.key && r.key.includes('التوحيد'))) list.splice(list.length - 1, 0, { key: 'التوحيد', mode: 'form' });
+          loaded.schools = list;
+          loaded.schoolsV2 = true;
+          AsyncStorage.setItem(K_SETTINGS, JSON.stringify(loaded)).catch(() => {});
+        }
         setSettings(loaded);
         if (!loaded.onboarded) setShowGuide(true);
         if (st) store.current = JSON.parse(st) || {};
