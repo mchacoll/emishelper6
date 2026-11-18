@@ -102,6 +102,7 @@ function Main() {
   const [barLog, setBarLog] = useState<Record<Pane, string>>({ site: '', emis: '' });
   const [script, setScript] = useState<{ source: string; version: string } | null>(null);
   const [update, setUpdate] = useState<Manifest | null>(null);
+  const [pendingUpdate, setPendingUpdate] = useState<Manifest | null>(null); // يبقى زر التحديث ظاهراً بعد «لاحقاً»
   const [busyText, setBusyText] = useState('');
   const [preview, setPreview] = useState<Preview | null>(null);
 
@@ -223,6 +224,7 @@ function Main() {
     lastCheck.current = Date.now();
     if (m.versionCode > installedBuild()) {
       setUpdate(m);
+      setPendingUpdate(m);
       return true;
     }
     const ns = await updateScript(m, scriptRef.current?.version || '0');
@@ -251,7 +253,7 @@ function Main() {
     };
     timers.push(setTimeout(() => attempt(0), 3000));
     const sub = AppState.addEventListener('change', st => {
-      if (st === 'active' && Date.now() - lastCheck.current > 10 * 60 * 1000) checkUpdatesRef.current(false);
+      if (st === 'active' && Date.now() - lastCheck.current > 2 * 60 * 1000) checkUpdatesRef.current(false);
     });
     return () => {
       timers.forEach(clearTimeout);
@@ -956,6 +958,9 @@ function Main() {
           accessibilityLabel="إعادة تحميل"
         />
         <IconButton icon="robot-outline" onPress={() => setShowCmd(true)} accessibilityLabel="مساعد الأوامر" />
+        {pendingUpdate ? (
+          <IconButton icon="download" bg={colors.gold} color={colors.navy} onPress={() => setUpdate(pendingUpdate)} accessibilityLabel="تحديث جديد" />
+        ) : null}
         <IconButton icon="cog-outline" onPress={() => setShowSettings(true)} accessibilityLabel="الإعدادات" />
       </View>
 
