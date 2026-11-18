@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { Modal, StyleSheet, View } from 'react-native';
 
-import { colors, radius, ROW } from './theme';
+import { colors, radius, ROW, themed } from './theme';
 import { Button, Icon, T } from './ui';
 import { downloadAndInstall, type Manifest, updateSizeMB } from './updater';
 
@@ -77,9 +77,10 @@ export function UpdateModal({ manifest, onClose }: { manifest: Manifest | null; 
   );
 }
 
-const styles = StyleSheet.create({
+const styles = themed(() =>
+  StyleSheet.create({
   backdrop: { flex: 1, backgroundColor: 'rgba(10,44,66,0.55)', justifyContent: 'center', padding: 22 },
-  card: { backgroundColor: '#fff', borderRadius: radius.xl, padding: 22, gap: 14 },
+  card: { backgroundColor: colors.card, borderRadius: radius.xl, padding: 22, gap: 14 },
   icon: {
     alignSelf: 'center',
     width: 66,
@@ -91,4 +92,5 @@ const styles = StyleSheet.create({
   },
   bar: { height: 8, borderRadius: 4, backgroundColor: colors.bg, overflow: 'hidden' },
   fill: { height: 8, backgroundColor: colors.gold },
-});
+  }),
+);

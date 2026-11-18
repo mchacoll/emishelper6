@@ -2,7 +2,7 @@ import { useMemo, useState } from 'react';
 import { Alert, FlatList, Modal, Pressable, StyleSheet, TextInput, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
-import { colors, fonts, radius, ROW } from './theme';
+import { colors, fonts, radius, ROW, themed } from './theme';
 import { Button, Icon, IconButton, T } from './ui';
 
 /** عملية إرسال واحدة إلى EMIS */
@@ -46,7 +46,7 @@ export function OpsScreen(props: { visible: boolean; ops: Op[]; onClose: () => v
 
   return (
     <Modal visible={props.visible} animationType="slide" onRequestClose={props.onClose}>
-      <SafeAreaView style={{ flex: 1, backgroundColor: colors.navy }} edges={['top']}>
+      <SafeAreaView style={{ flex: 1, backgroundColor: colors.header }} edges={['top']}>
         <View style={styles.head}>
           <IconButton icon="close" onPress={props.onClose} accessibilityLabel="إغلاق" />
           <T bold style={{ color: '#fff', fontSize: 17, flex: 1 }}>
@@ -133,7 +133,8 @@ function Chip({ on, label, color, onPress }: { on: boolean; label: string; color
   );
 }
 
-const styles = StyleSheet.create({
+const styles = themed(() =>
+  StyleSheet.create({
   head: { flexDirection: ROW, alignItems: 'center', gap: 8, paddingHorizontal: 10, paddingVertical: 10 },
   row: { flexDirection: ROW, alignItems: 'center' },
   bar: { padding: 12, gap: 8 },
@@ -160,4 +161,5 @@ const styles = StyleSheet.create({
     borderBottomColor: colors.border,
     backgroundColor: colors.card,
   },
-});
+  }),
+);

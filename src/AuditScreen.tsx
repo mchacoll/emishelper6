@@ -2,7 +2,7 @@ import { useMemo, useState } from 'react';
 import { ActivityIndicator, Alert, FlatList, Modal, Pressable, StyleSheet, TextInput, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
-import { colors, fonts, radius, ROW } from './theme';
+import { colors, fonts, radius, ROW, themed } from './theme';
 import { Button, Icon, IconButton, T } from './ui';
 
 /** طالب في الكشف: هاتف أقل من 11 رقماً و/أو بطاقة موحدة أقل من 12 رقماً (من EMIS) */
@@ -102,7 +102,7 @@ export function AuditScreen(props: {
 
   return (
     <Modal visible={s.visible} animationType="slide" onRequestClose={props.onClose}>
-      <SafeAreaView style={{ flex: 1, backgroundColor: colors.navy }} edges={['top', 'bottom']}>
+      <SafeAreaView style={{ flex: 1, backgroundColor: colors.header }} edges={['top', 'bottom']}>
         <View style={styles.head}>
           <IconButton icon="close" onPress={props.onClose} accessibilityLabel="إغلاق" />
           <View style={{ flex: 1 }}>
@@ -250,7 +250,8 @@ function Chip({ on, label, color, onPress }: { on: boolean; label: string; color
   );
 }
 
-const styles = StyleSheet.create({
+const styles = themed(() =>
+  StyleSheet.create({
   head: { flexDirection: ROW, alignItems: 'center', gap: 8, paddingHorizontal: 10, paddingVertical: 10 },
   center: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: 28, gap: 14 },
   row: { flexDirection: ROW, alignItems: 'center' },
@@ -284,4 +285,5 @@ const styles = StyleSheet.create({
     textAlign: 'right',
     fontFamily: fonts.regular,
   },
-});
+  }),
+);

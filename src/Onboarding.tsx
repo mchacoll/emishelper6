@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { Modal, StyleSheet, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
-import { colors, radius, ROW } from './theme';
+import { colors, radius, ROW, themed } from './theme';
 import { Button, Icon, type IconName, T } from './ui';
 
 const STEPS: { icon: IconName; title: string; body: string }[] = [
@@ -76,7 +76,8 @@ export function Onboarding({ visible, onDone }: { visible: boolean; onDone: () =
   );
 }
 
-const styles = StyleSheet.create({
+const styles = themed(() =>
+  StyleSheet.create({
   wrap: { flex: 1, backgroundColor: colors.navy, justifyContent: 'space-between', padding: 20 },
   top: { alignItems: 'center', gap: 8, marginTop: 40 },
   logo: {
@@ -88,7 +89,7 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     marginBottom: 8,
   },
-  card: { backgroundColor: '#fff', borderRadius: radius.xl, padding: 22, gap: 12 },
+  card: { backgroundColor: colors.card, borderRadius: radius.xl, padding: 22, gap: 12 },
   stepIcon: {
     alignSelf: 'center',
     width: 70,
@@ -101,4 +102,5 @@ const styles = StyleSheet.create({
   dots: { flexDirection: 'row', justifyContent: 'center', gap: 6, marginVertical: 4 },
   dot: { width: 8, height: 8, borderRadius: 4, backgroundColor: colors.border },
   dotOn: { width: 22, backgroundColor: colors.gold },
-});
+  }),
+);

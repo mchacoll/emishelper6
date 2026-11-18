@@ -2,7 +2,7 @@ import { useMemo, useState } from 'react';
 import { ActivityIndicator, FlatList, Modal, Pressable, StyleSheet, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
-import { colors, radius, ROW } from './theme';
+import { colors, radius, ROW, themed } from './theme';
 import { Button, Icon, IconButton, type IconName, T } from './ui';
 
 export type CmpItem = {
@@ -72,7 +72,7 @@ export function CompareScreen(props: {
 
   return (
     <Modal visible={state.visible} animationType="slide" onRequestClose={props.onClose}>
-      <SafeAreaView style={{ flex: 1, backgroundColor: colors.navy }} edges={['top']}>
+      <SafeAreaView style={{ flex: 1, backgroundColor: colors.header }} edges={['top']}>
         <View style={styles.head}>
           <IconButton icon="close" onPress={props.onClose} accessibilityLabel="إغلاق" />
           <View style={{ flex: 1 }}>
@@ -215,7 +215,8 @@ function Badge({ text, color }: { text: string; color: string }) {
   );
 }
 
-const styles = StyleSheet.create({
+const styles = themed(() =>
+  StyleSheet.create({
   head: { flexDirection: ROW, alignItems: 'center', gap: 8, paddingHorizontal: 10, paddingVertical: 10 },
   center: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: 28, gap: 14 },
   bar: { alignSelf: 'stretch', height: 10, borderRadius: 5, backgroundColor: colors.border, overflow: 'hidden' },
@@ -255,4 +256,5 @@ const styles = StyleSheet.create({
   flexRow: { flexDirection: ROW, alignItems: 'center', gap: 6 },
   badge: { borderWidth: 1, borderRadius: 999, paddingHorizontal: 6, paddingVertical: 1 },
   footer: { position: 'absolute', left: 0, right: 0, bottom: 0, padding: 12, backgroundColor: colors.bg },
-});
+  }),
+);

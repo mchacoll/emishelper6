@@ -12,7 +12,7 @@ import {
   type ViewStyle,
 } from 'react-native';
 
-import { colors, fonts, radius, ROW, TEXT_START } from './theme';
+import { colors, fonts, radius, ROW, TEXT_START, themed } from './theme';
 
 export type IconName = ComponentProps<typeof MaterialCommunityIcons>['name'];
 
@@ -30,14 +30,16 @@ export function Icon({ name, size = 20, color = colors.text }: { name: IconName;
 }
 
 type BtnKind = 'primary' | 'gold' | 'danger' | 'purple' | 'ghost' | 'soft';
-const BTN: Record<BtnKind, { bg: string; fg: string; border?: string }> = {
-  primary: { bg: colors.navy, fg: '#fff' },
-  gold: { bg: colors.gold, fg: colors.navyDark },
-  danger: { bg: colors.red, fg: '#fff' },
-  purple: { bg: colors.purple, fg: '#fff' },
-  ghost: { bg: 'transparent', fg: colors.navy, border: colors.border },
-  soft: { bg: colors.blueSoft, fg: colors.navy },
-};
+// ألوان الأزرار تُقرأ عند الرسم (تتبع وضع النهار/الليل)
+const btnColors = (kind: BtnKind): { bg: string; fg: string; border?: string } =>
+  ({
+    primary: { bg: colors.navy, fg: '#fff' },
+    gold: { bg: colors.gold, fg: colors.navyDark },
+    danger: { bg: colors.red, fg: '#fff' },
+    purple: { bg: colors.purple, fg: '#fff' },
+    ghost: { bg: 'transparent', fg: colors.navy, border: colors.border },
+    soft: { bg: colors.blueSoft, fg: colors.navy, border: colors.blueSoft },
+  })[kind];
 
 export function Button({
   label,
@@ -60,7 +62,7 @@ export function Button({
   style?: StyleProp<ViewStyle>;
   compact?: boolean;
 }) {
-  const k = BTN[kind];
+  const k = btnColors(kind);
   return (
     <Pressable
       onPress={onPress}
@@ -70,6 +72,7 @@ export function Button({
       style={({ pressed }) => [
         styles.btn,
         compact && styles.btnCompact,
+        (kind === 'primary' || kind === 'gold') && !disabled && styles.btnLift,
         { backgroundColor: k.bg, borderColor: k.border ?? k.bg, opacity: disabled ? 0.45 : pressed ? 0.85 : 1 },
         style,
       ]}
@@ -127,10 +130,14 @@ export function Card({ children, style }: { children: ReactNode; style?: StylePr
 }
 
 export function SectionTitle({ children }: { children: ReactNode }) {
+  // عنوان القسم مع شريط ذهبي صغير
   return (
-    <T bold style={styles.section}>
-      {children}
-    </T>
+    <View style={styles.sectionRow}>
+      <View style={styles.sectionBar} />
+      <T bold style={styles.section}>
+        {children}
+      </T>
+    </View>
   );
 }
 
@@ -163,14 +170,15 @@ export function SettingRow({
       <Switch
         value={value}
         onValueChange={onChange}
-        trackColor={{ true: colors.navySoft, false: '#CBD5DC' }}
+        trackColor={{ true: colors.navySoft, false: colors.track }}
         thumbColor={value ? colors.gold : '#fff'}
       />
     </Pressable>
   );
 }
 
-const styles = StyleSheet.create({
+const styles = themed(() =>
+  StyleSheet.create({
   btn: {
     flexDirection: ROW,
     alignItems: 'center',
@@ -182,24 +190,33 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     overflow: 'hidden',
   },
-  btnCompact: { minHeight: 40, paddingHorizontal: 10, gap: 6 },
+  btnCompact: { minHeight: 42, paddingHorizontal: 12, gap: 6 },
+  btnLift: { shadowColor: colors.shadow, shadowOpacity: 0.18, shadowRadius: 8, shadowOffset: { width: 0, height: 3 }, elevation: 3 },
   btnText: { fontSize: 15, textAlign: 'center' },
   card: {
     backgroundColor: colors.card,
     borderRadius: radius.lg,
     borderWidth: 1,
     borderColor: colors.border,
+    shadowColor: colors.shadow,
+    shadowOpacity: 0.06,
+    shadowRadius: 10,
+    shadowOffset: { width: 0, height: 2 },
+    elevation: 1,
     overflow: 'hidden',
   },
-  section: { fontSize: 13, color: colors.muted, marginTop: 8, marginBottom: 2, paddingHorizontal: 4 },
+  sectionRow: { flexDirection: ROW, alignItems: 'center', gap: 8, marginTop: 12, marginBottom: 2, paddingHorizontal: 4 },
+  sectionBar: { width: 4, height: 16, borderRadius: 2, backgroundColor: colors.gold },
+  section: { fontSize: 13, color: colors.muted, letterSpacing: 0.2 },
   setRow: { flexDirection: ROW, alignItems: 'center', gap: 12, paddingHorizontal: 14, paddingVertical: 12 },
   setRowBorder: { borderBottomWidth: 1, borderBottomColor: colors.border },
   setIcon: {
     width: 36,
     height: 36,
-    borderRadius: 10,
+    borderRadius: 12,
     backgroundColor: colors.blueSoft,
     alignItems: 'center',
     justifyContent: 'center',
   },
-});
+  }),
+);

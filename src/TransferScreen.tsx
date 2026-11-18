@@ -2,7 +2,7 @@ import { useMemo, useState } from 'react';
 import { ActivityIndicator, FlatList, Modal, Pressable, StyleSheet, TextInput, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
-import { colors, fonts, radius, ROW } from './theme';
+import { colors, fonts, radius, ROW, themed } from './theme';
 import { Button, Icon, IconButton, T } from './ui';
 
 export type SiteStudent = {
@@ -53,7 +53,7 @@ export function TransferScreen(props: {
 
   return (
     <Modal visible={st.visible} animationType="slide" onRequestClose={props.onClose}>
-      <SafeAreaView style={{ flex: 1, backgroundColor: colors.navy }} edges={['top', 'bottom']}>
+      <SafeAreaView style={{ flex: 1, backgroundColor: colors.header }} edges={['top', 'bottom']}>
         <View style={styles.head}>
           <IconButton icon="close" onPress={props.onClose} accessibilityLabel="إغلاق" />
           <T bold style={{ color: '#fff', fontSize: 17, flex: 1 }}>
@@ -143,7 +143,8 @@ function Chip({ on, label, onPress }: { on: boolean; label: string; onPress: () 
   );
 }
 
-const styles = StyleSheet.create({
+const styles = themed(() =>
+  StyleSheet.create({
   head: { flexDirection: ROW, alignItems: 'center', gap: 8, paddingHorizontal: 10, paddingVertical: 10 },
   center: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: 28, gap: 14 },
   row: { flexDirection: ROW, alignItems: 'center' },
@@ -185,4 +186,5 @@ const styles = StyleSheet.create({
   },
   chips: { flexDirection: ROW, flexWrap: 'wrap', gap: 6 },
   chip: { paddingHorizontal: 12, paddingVertical: 6, borderRadius: 999, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.bg },
-});
+  }),
+);

@@ -3,7 +3,7 @@ import { Alert, Modal, Pressable, ScrollView, StyleSheet, TextInput, View } from
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { normalizedSchools, normUrl, type SchoolRule, type Settings } from './settings';
-import { colors, fonts, radius, ROW } from './theme';
+import { colors, fonts, radius, ROW, themed } from './theme';
 import { Button, Card, Icon, IconButton, SectionTitle, SettingRow, T } from './ui';
 
 export type LogLine = { t: number; pane: 'site' | 'emis'; level: string; msg: string };
@@ -19,7 +19,6 @@ export function SettingsScreen(props: {
   onCopyLogs: () => void;
   onShareLogs: () => void;
   onShowGuide: () => void;
-  onDiagnose: () => void;
   onCompare: () => void;
   onShowOps: () => void;
   onAudit: (source: 'site' | 'emis') => void;
@@ -29,6 +28,8 @@ export function SettingsScreen(props: {
   onCheckUpdate: () => void;
   owner: boolean;
   onToggleOwner: () => void;
+  theme: 'auto' | 'light' | 'dark';
+  onTheme: (t: 'auto' | 'light' | 'dark') => void;
   versionText: string;
 }) {
   const [d, setD] = useState(props.settings);
@@ -51,7 +52,7 @@ export function SettingsScreen(props: {
 
   return (
     <Modal visible={props.visible} animationType="slide" onRequestClose={props.onClose}>
-      <SafeAreaView style={{ flex: 1, backgroundColor: colors.navy }} edges={['top']}>
+      <SafeAreaView style={{ flex: 1, backgroundColor: colors.header }} edges={['top']}>
         <View style={styles.head}>
           <IconButton icon="close" onPress={props.onClose} accessibilityLabel="إغلاق" />
           <T bold style={{ color: '#fff', fontSize: 18, flex: 1 }}>
@@ -59,6 +60,29 @@ export function SettingsScreen(props: {
           </T>
         </View>
         <ScrollView style={{ backgroundColor: colors.bg }} contentContainerStyle={{ padding: 16, gap: 8, paddingBottom: 40 }}>
+          <SectionTitle>المظهر</SectionTitle>
+          <Card style={{ padding: 12 }}>
+            <View style={{ flexDirection: ROW, gap: 8 }}>
+              {(
+                [
+                  ['auto', 'theme-light-dark', 'حسب الهاتف'],
+                  ['light', 'white-balance-sunny', 'نهاري'],
+                  ['dark', 'weather-night', 'ليلي'],
+                ] as const
+              ).map(([k, ic, label]) => {
+                const on = props.theme === k;
+                return (
+                  <Pressable key={k} onPress={() => props.onTheme(k)} style={[styles.modeChip, on && styles.modeChipOn, { flexDirection: ROW, alignItems: 'center', justifyContent: 'center', gap: 6 }]}>
+                    <Icon name={ic} size={16} color={on ? '#fff' : colors.muted} />
+                    <T bold style={{ fontSize: 13, color: on ? '#fff' : colors.text }}>
+                      {label}
+                    </T>
+                  </Pressable>
+                );
+              })}
+            </View>
+          </Card>
+
           <SectionTitle>طريقة العمل</SectionTitle>
           <Card>
             <SettingRow
@@ -86,13 +110,6 @@ export function SettingsScreen(props: {
               subtitle="يعرض صفحة EMIS بعرض شاشة الحاسوب (صغيرة، كبّرها بإصبعين)."
               value={d.desktopEmis}
               onChange={v => set('desktopEmis', v)}
-            />
-            <SettingRow
-              icon="view-split-horizontal"
-              title="عرض الشاشتين معاً"
-              subtitle="موقع الطلاب في الأعلى و EMIS في الأسفل."
-              value={d.split}
-              onChange={v => set('split', v)}
             />
           </Card>
 
@@ -168,7 +185,6 @@ export function SettingsScreen(props: {
                   ))}
               </View>
             ) : null}
-            <Button kind="ghost" icon="stethoscope" label="تشخيص قائمة «الجنس» في EMIS" onPress={props.onDiagnose} compact />
             <Button kind="ghost" icon="help-circle-outline" label="طريقة الاستخدام" onPress={props.onShowGuide} compact />
           </Card>
 
@@ -303,11 +319,12 @@ function UrlField(props: { icon: 'school-outline' | 'bank-outline'; label: strin
   );
 }
 
-const styles = StyleSheet.create({
+const styles = themed(() =>
+  StyleSheet.create({
   schoolRow: { flexDirection: ROW, alignItems: 'center', gap: 12, paddingHorizontal: 14, paddingVertical: 12 },
   schoolBorder: { borderBottomWidth: 1, borderBottomColor: colors.border },
   backdrop: { flex: 1, backgroundColor: 'rgba(10,44,66,0.55)', justifyContent: 'center', padding: 20 },
-  dialog: { backgroundColor: '#fff', borderRadius: radius.xl, padding: 18, gap: 12 },
+  dialog: { backgroundColor: colors.card, borderRadius: radius.xl, padding: 18, gap: 12 },
   modeChip: { flex: 1, paddingVertical: 9, borderRadius: radius.md, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.bg },
   modeChipOn: { backgroundColor: colors.navy, borderColor: colors.navy },
   head: { flexDirection: ROW, alignItems: 'center', gap: 12, paddingHorizontal: 12, paddingVertical: 10 },
@@ -333,4 +350,5 @@ const styles = StyleSheet.create({
   },
   chipOn: { backgroundColor: colors.navy, borderColor: colors.navy },
   errBox: { backgroundColor: colors.bg, borderRadius: radius.md, padding: 10, gap: 4 },
-});
+  }),
+);

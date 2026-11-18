@@ -6,7 +6,7 @@ import { useFonts } from 'expo-font';
 import * as Sharing from 'expo-sharing';
 import { StatusBar } from 'expo-status-bar';
 import { type RefObject, useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { ActivityIndicator, Alert, AppState, BackHandler, Pressable, Share, StyleSheet, ToastAndroid, View } from 'react-native';
+import { ActivityIndicator, Alert, AppState, BackHandler, Pressable, Share, StyleSheet, ToastAndroid, useColorScheme, View } from 'react-native';
 import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
 import WebView, { type WebViewMessageEvent, type WebViewNavigation } from 'react-native-webview';
 
@@ -14,7 +14,7 @@ import { type AuditRow, AuditScreen, type AuditState, auditToRows } from './src/
 import { type StatRow, StatsScreen, type StatsState, statsToRows } from './src/StatsScreen';
 import { type SiteStudent, TransferScreen, type TransferState } from './src/TransferScreen';
 import { PreviewModal, type Preview, type PreviewRow } from './src/PreviewModal';
-import { buildInjection, desktopViewportJs, diagnoseListJs, hostOf, parseBridgeMessage, remoteSetJs, syncAndBootJs } from './src/bridge';
+import { buildInjection, desktopViewportJs, hostOf, parseBridgeMessage, remoteSetJs, syncAndBootJs } from './src/bridge';
 import { type CmpItem, type CompareState, CompareScreen } from './src/CompareScreen';
 import { parseGeneric, toXlsxBase64 } from './src/excel';
 import { type ExcelData, ExcelScreen } from './src/ExcelScreen';
@@ -22,7 +22,7 @@ import { Onboarding } from './src/Onboarding';
 import { type Op, OpsScreen, opsToRows } from './src/OpsScreen';
 import { DEFAULT_SETTINGS, normalizedSchools, normUrl, type Settings } from './src/settings';
 import { type LogLine, SettingsScreen } from './src/SettingsScreen';
-import { colors, ROW } from './src/theme';
+import { colors, ROW, setThemeName, themed } from './src/theme';
 import { Icon, IconButton, type IconName, T } from './src/ui';
 import { UpdateModal } from './src/UpdateModal';
 import { fetchManifest, installedBuild, installedVersion, loadScript, type Manifest, updateScript } from './src/updater';
@@ -91,6 +91,10 @@ function Main() {
   });
   const [ready, setReady] = useState(false);
   const [settings, setSettings] = useState<Settings>(DEFAULT_SETTINGS);
+  // (v8.24) وضع النهار/الليل: يُضبط قبل رسم أي شاشة في هذه الدورة
+  const sysScheme = useColorScheme();
+  const dark = settings.theme === 'dark' || (settings.theme !== 'light' && sysScheme === 'dark');
+  setThemeName(dark ? 'dark' : 'light');
   const [active, setActive] = useState<Tab>('site');
   const [showSettings, setShowSettings] = useState(false);
   const [showGuide, setShowGuide] = useState(false);
@@ -1031,13 +1035,13 @@ function Main() {
 
   if (!ready || !fontsLoaded) {
     return (
-      <View style={[styles.fill, styles.center, { backgroundColor: colors.navy }]}>
+      <View style={[styles.fill, styles.center, { backgroundColor: colors.header }]}>
         <ActivityIndicator color={colors.gold} size="large" />
       </View>
     );
   }
 
-  const split = settings.split;
+  const split = false; // (v8.24) حُذف «عرض الشاشتين معاً»
 
   const renderPane = (p: Pane) => {
     const url = normUrl(p === 'site' ? settings.siteUrl : settings.emisUrl);
@@ -1085,7 +1089,7 @@ function Main() {
   };
 
   return (
-    <SafeAreaView style={[styles.fill, { backgroundColor: colors.navy }]} edges={['top']}>
+    <SafeAreaView style={[styles.fill, { backgroundColor: colors.header }]} edges={['top']}>
       <StatusBar style="light" />
 
       {/* الشريط العلوي */}
@@ -1102,11 +1106,6 @@ function Main() {
           }} />
         </View>
         <IconButton
-          icon={split ? 'view-agenda-outline' : 'view-split-horizontal'}
-          onPress={() => saveSettings({ ...settings, split: !split })}
-          accessibilityLabel="عرض الشاشتين"
-        />
-        <IconButton
           icon="refresh"
           onPress={() => reload(split || active === 'excel' ? 'emis' : active)}
           onLongPress={() => {
@@ -1119,6 +1118,12 @@ function Main() {
         {pendingUpdate ? (
           <IconButton icon="download" bg={colors.gold} color={colors.navy} onPress={() => setUpdate(pendingUpdate)} accessibilityLabel="تحديث جديد" />
         ) : null}
+        <IconButton
+          icon={dark ? 'white-balance-sunny' : 'weather-night'}
+          color={colors.gold}
+          onPress={() => saveSettings({ ...settings, theme: dark ? 'light' : 'dark' })}
+          accessibilityLabel={dark ? 'الوضع النهاري' : 'الوضع الليلي'}
+        />
         <IconButton icon="cog-outline" onPress={() => setShowSettings(true)} accessibilityLabel="الإعدادات" />
       </View>
 
@@ -1168,7 +1173,8 @@ function Main() {
         errors={errors}
         onClose={() => setShowSettings(false)}
         onSave={s => {
-          saveSettings(s);
+          // المظهر ووضع المالك يُحفظان فوراً عند تغييرهما، فلا تُرجعهما نسخة الإعدادات المفتوحة
+          saveSettings({ ...s, theme: settingsRef.current.theme, owner: settingsRef.current.owner });
           setShowSettings(false);
           toast('تم حفظ الإعدادات');
         }}
@@ -1201,18 +1207,14 @@ function Main() {
           loadTransfer();
         }}
         opsCount={ops.length}
-        onDiagnose={() => {
-          setShowSettings(false);
-          if (!settingsRef.current.split) setActive('emis');
-          emisRef.current?.injectJavaScript(diagnoseListJs('الجنس', ['ذكر', 'أنثى']));
-          toast('افتح استمارة «جديد» في EMIS أولاً. سيظهر التشخيص في السجل بعد ثانيتين، ثم انسخه وأرسله');
-        }}
         onShowGuide={() => {
           setShowSettings(false);
           setShowGuide(true);
         }}
         onCheckUpdate={() => checkUpdates(true)}
         owner={!!settings.owner}
+        theme={settings.theme || 'auto'}
+        onTheme={t => saveSettings({ ...settings, theme: t })}
         onToggleOwner={() => {
           const owner = !settings.owner;
           saveSettings({ ...settings, owner });
@@ -1304,17 +1306,28 @@ function Seg({ icon, label, on, onPress }: { icon: IconName; label: string; on: 
   );
 }
 
-const styles = StyleSheet.create({
+const styles = themed(() =>
+  StyleSheet.create({
   fill: { flex: 1 },
   center: { alignItems: 'center', justifyContent: 'center' },
-  header: { flexDirection: ROW, alignItems: 'center', gap: 8, paddingHorizontal: 10, paddingVertical: 8, backgroundColor: colors.navy },
-  segment: { flex: 1, flexDirection: ROW, backgroundColor: 'rgba(255,255,255,0.1)', borderRadius: 12, padding: 3, gap: 3 },
-  seg: { flex: 1, flexDirection: ROW, alignItems: 'center', justifyContent: 'center', gap: 6, paddingVertical: 7, borderRadius: 9 },
-  segOn: { backgroundColor: colors.gold },
+  header: {
+    flexDirection: ROW,
+    alignItems: 'center',
+    gap: 8,
+    paddingHorizontal: 10,
+    paddingVertical: 9,
+    backgroundColor: colors.header,
+    borderBottomWidth: 2,
+    borderBottomColor: colors.headerLine,
+  },
+  segment: { flex: 1, flexDirection: ROW, backgroundColor: 'rgba(255,255,255,0.08)', borderRadius: 14, padding: 3, gap: 3, borderWidth: 1, borderColor: 'rgba(255,255,255,0.08)' },
+  seg: { flex: 1, flexDirection: ROW, alignItems: 'center', justifyContent: 'center', gap: 6, paddingVertical: 8, borderRadius: 11 },
+  segOn: { backgroundColor: colors.gold, shadowColor: '#000', shadowOpacity: 0.25, shadowRadius: 6, shadowOffset: { width: 0, height: 2 }, elevation: 3 },
   stacked: { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: '#fff' },
   splitPane: { flex: 1, backgroundColor: '#fff' },
   divider: { height: 3, backgroundColor: colors.gold },
   progress: { position: 'absolute', top: 0, left: 0, right: 0, height: 3, backgroundColor: colors.gold },
   busyWrap: { position: 'absolute', left: 0, right: 0, bottom: 0, zIndex: 30, elevation: 30, padding: 10 },
-  busy: { flexDirection: ROW, alignItems: 'center', gap: 10, backgroundColor: colors.navy, borderRadius: 14, paddingHorizontal: 14, paddingVertical: 10 },
-});
+  busy: { flexDirection: ROW, alignItems: 'center', gap: 10, backgroundColor: colors.header, borderWidth: 1, borderColor: colors.headerLine, borderRadius: 16, paddingHorizontal: 14, paddingVertical: 10 },
+  }),
+);

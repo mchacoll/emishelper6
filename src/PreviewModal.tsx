@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { Modal, Pressable, ScrollView, StyleSheet, TextInput, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
-import { colors, fonts, radius, ROW } from './theme';
+import { colors, fonts, radius, ROW, themed } from './theme';
 import { Button, Icon, T } from './ui';
 
 export type PreviewRow = [label: string, form: string, emis: string];
@@ -121,7 +121,8 @@ export function PreviewModal(props: { preview: Preview | null; onCancel: () => v
   );
 }
 
-const styles = StyleSheet.create({
+const styles = themed(() =>
+  StyleSheet.create({
   backdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,0.45)', justifyContent: 'flex-end' },
   sheet: { backgroundColor: colors.card, borderTopLeftRadius: radius.lg, borderTopRightRadius: radius.lg, padding: 14 },
   head: { flexDirection: ROW, alignItems: 'center', gap: 10, paddingBottom: 10 },
@@ -146,4 +147,5 @@ const styles = StyleSheet.create({
   c0: { flex: 1.1, fontSize: 12 },
   c1: { flex: 1.4, fontSize: 12 },
   c2: { flex: 1.4, fontSize: 12 },
-});
+  }),
+);

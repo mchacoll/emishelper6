@@ -1,7 +1,7 @@
 import { ActivityIndicator, Modal, ScrollView, StyleSheet, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
-import { colors, radius, ROW } from './theme';
+import { colors, radius, ROW, themed } from './theme';
 import { Button, Icon, IconButton, T } from './ui';
 
 /** مجموعة: صف + شعبة، ذكور/إناث/غير محدد */
@@ -93,7 +93,7 @@ export function StatsScreen(props: { state: StatsState; onClose: () => void; onR
 
   return (
     <Modal visible={s.visible} animationType="slide" onRequestClose={props.onClose}>
-      <SafeAreaView style={{ flex: 1, backgroundColor: colors.navy }} edges={['top', 'bottom']}>
+      <SafeAreaView style={{ flex: 1, backgroundColor: colors.header }} edges={['top', 'bottom']}>
         <View style={styles.head}>
           <IconButton icon="close" onPress={props.onClose} accessibilityLabel="إغلاق" />
           <View style={{ flex: 1 }}>
@@ -171,7 +171,8 @@ function Card({ label, total, m, f, color }: { label: string; total: number; m: 
   );
 }
 
-const styles = StyleSheet.create({
+const styles = themed(() =>
+  StyleSheet.create({
   head: { flexDirection: ROW, alignItems: 'center', gap: 8, paddingHorizontal: 10, paddingVertical: 10 },
   row: { flexDirection: ROW, alignItems: 'center' },
   cards: { flexDirection: ROW, gap: 8 },
@@ -184,4 +185,5 @@ const styles = StyleSheet.create({
   cN: { flex: 1.4, fontSize: 12, textAlign: 'center' },
   cD: { flex: 0.8, fontSize: 12, textAlign: 'center' },
   footer: { position: 'absolute', left: 0, right: 0, bottom: 0, padding: 12, backgroundColor: colors.bg },
-});
+  }),
+);

@@ -1,6 +1,6 @@
 import { FlatList, Pressable, StyleSheet, View } from 'react-native';
 
-import { colors, radius, ROW } from './theme';
+import { colors, radius, ROW, themed } from './theme';
 import { Button, Icon, T } from './ui';
 
 export type RowStatus = { ok: number; miss: string[]; fail: string[]; t: number };
@@ -155,7 +155,8 @@ export function ExcelScreen(props: {
   );
 }
 
-const styles = StyleSheet.create({
+const styles = themed(() =>
+  StyleSheet.create({
   fill: { flex: 1 },
   empty: { alignItems: 'center', justifyContent: 'center', padding: 28, gap: 14, backgroundColor: colors.bg },
   bigIcon: { width: 86, height: 86, borderRadius: 43, backgroundColor: colors.greenSoft, alignItems: 'center', justifyContent: 'center' },
@@ -196,4 +197,5 @@ const styles = StyleSheet.create({
   flexRow: { flexDirection: ROW, alignItems: 'center', gap: 6 },
   chips: { flexDirection: ROW, flexWrap: 'wrap', gap: 6 },
   chip: { backgroundColor: colors.bg, borderRadius: radius.sm, paddingHorizontal: 8, paddingVertical: 4, maxWidth: '48%' },
-});
+  }),
+);
