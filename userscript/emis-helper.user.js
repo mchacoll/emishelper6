@@ -1,7 +1,7 @@
 // ==UserScript==
-// @name         مساعد EMIS – تعبئة تلقائية (v8.27.0)
+// @name         مساعد EMIS – تعبئة تلقائية (v8.29.0)
 // @namespace    emis-helper
-// @version      8.27.0
+// @version      8.29.0
 // @description  تعبئة تلقائية لـ EMIS + حفظ + «تمت المراجعة» + فتح «جديد» + نقل «الاحتياجات الخاصة» من EMIS إلى موقعك
 // @match        *://*/*
 // @grant        GM_setValue
@@ -316,7 +316,7 @@
     ui.dir = 'rtl';
 
     const head = mk('div', 'display:flex;justify-content:space-between;align-items:center;gap:8px');
-    head.appendChild(mk('b', 'font-size:13.5px;', title + ' v8.27.0'));
+    head.appendChild(mk('b', 'font-size:13.5px;', title + ' v8.29.0'));
     const minBtn = mk('button',
       'background:none;border:0;color:#fff;font-size:22px;' +
       'min-width:32px;min-height:32px;cursor:pointer;padding:0;line-height:1;', '−');
@@ -1816,6 +1816,8 @@
 
   /* ---- (v8.6) قواعد المدارس: تأتي من إعدادات التطبيق (window.__EMIS_SCHOOL_RULES) أو القيم المدمجة ----
      key: كلمة من اسم المدرسة ('' = باقي المدارس)، mode: 'fixed' قيم ثابتة / 'form' حسب استمارة الطالب */
+  // (v8.29) اسم المدرسة من حساب المنسق (بأي اسم حقل يرسله الموقع)
+  const schoolNameOf = me => clean(String((me && (me.name || me.schoolName || me.title || me.displayName || (me.school && me.school.name))) || ''));
   const BUILTIN_RULES = [
     { key: 'ابن بطوطة', mode: 'form' },
     { key: 'ميثم التمار', mode: 'form' },
@@ -1824,7 +1826,13 @@
     { key: 'الوجدان', mode: 'form' },   // (v8.27)
     { key: '', mode: 'fixed', gov: DEFAULTS.placeChain[1], place: DEFAULTS.place, city: DEFAULTS.city, lang: DEFAULTS.studyLanguage },
   ];
-  const SCHOOL_RULES = (Array.isArray(window.__EMIS_SCHOOL_RULES) && window.__EMIS_SCHOOL_RULES.length) ? window.__EMIS_SCHOOL_RULES : BUILTIN_RULES;
+  // (v8.29) قواعد التطبيق + المدارس المعروفة «حسب الاستمارة» إن لم تكن في إعدادات الهاتف (مثلاً نسخة تطبيق قديمة)
+  const INJ_RULES = (Array.isArray(window.__EMIS_SCHOOL_RULES) && window.__EMIS_SCHOOL_RULES.length) ? window.__EMIS_SCHOOL_RULES : null;
+  const SCHOOL_RULES = INJ_RULES
+    ? [...INJ_RULES.filter(r => r && clean(r.key)),
+      ...BUILTIN_RULES.filter(b => clean(b.key) && !INJ_RULES.some(r => r && clean(r.key) && norm(r.key) === norm(b.key))),
+      ...INJ_RULES.filter(r => r && !clean(r.key))]
+    : BUILTIN_RULES;
   const DEFAULT_RULE = SCHOOL_RULES.find(r => !clean(r.key)) || BUILTIN_RULES[BUILTIN_RULES.length - 1];
   function ruleFor(school) {
     const sn = norm(school);
@@ -1834,7 +1842,10 @@
   const formDriven = d => ruleFor(d && d.school).mode === 'form';
   // المكان والمدينة ولغة الدراسة لهذا الطالب
   function placeOf(d) {
-    const r = ruleFor(d && d.school);
+    let r = ruleFor(d && d.school);
+    // (v8.29) استمارة محافظتها غير محافظة الإعداد الثابت (مثلاً بغداد بدل ديالى): المكان والمدينة من الاستمارة، لا «خانقين»
+    if (r.mode !== 'form' && d && clean(d.governorate) && clean(d.placeSite) &&
+      norm(d.governorate) !== norm(clean(r.gov) || DEFAULTS.placeChain[1])) r = { ...r, mode: 'form' };
     if (r.mode === 'form') {
       const text = clean(d.placeSite), gov = clean(d.governorate);
       return { text, chain: ['العراق', gov, text].filter(Boolean), city: clean(d.citySite), gov, fixed: false };
@@ -2670,7 +2681,7 @@
         let reviewed = 0, existing = 0;
         for (const rec of list) {
           if (!rec || typeof rec !== 'object') continue;
-          const d = recordToData(rec, me.name);
+          const d = recordToData(rec, schoolNameOf(me));
           if (d.reviewed) { reviewed++; continue; }
           // (v7.9.1) الاسم الرباعي فقط: الاسم + الأب + الجد + جد الأب
           const k = norm(d.name) + norm(d.father) + norm(d.grandfather) + norm(d.greatGrandfather);
@@ -2722,7 +2733,7 @@
         const items = [];
         for (const rec of list) {
           if (!rec || typeof rec !== 'object') continue;
-          const d = recordToData(rec, me.name);
+          const d = recordToData(rec, schoolNameOf(me));
           const k3 = (norm(d.name) + norm(d.father) + norm(d.grandfather)).replace(/[^\u0621-\u064A\u0671-\u06D5]/g, '');
           const k4 = k3 + norm(d.greatGrandfather).replace(/[^\u0621-\u064A\u0671-\u06D5]/g, '');
           const inEmis = !!d.greatGrandfather && (keys.has(k4) || names.some(n => n.startsWith(k4)));
@@ -2736,7 +2747,7 @@
             d: inEmis ? null : d,
           });
         }
-        res({ ok: true, school: me.name, total: list.length, items });
+        res({ ok: true, school: schoolNameOf(me), total: list.length, items });
       } catch (e) { res({ ok: false, error: (e && e.message) || String(e) }); }
     }
     async function markManyApi(ids) {
@@ -2788,7 +2799,7 @@
         const rows = [];
         for (const rec of list) {
           if (!rec || typeof rec !== 'object') continue;
-          const d = recordToData(rec, me.name);
+          const d = recordToData(rec, schoolNameOf(me));
           const pd = dg(d.phone), civil = isCivil(d), idd = dg(d.nationalId);
           const badPhone = pd.length < 11;
           const badCard = !civil && idd.length < 12;
@@ -2839,13 +2850,13 @@
         const g = {};
         for (const rec of list) {
           if (!rec || typeof rec !== 'object') continue;
-          const d = recordToData(rec, me.name);
+          const d = recordToData(rec, schoolNameOf(me));
           const k = gradeKey(d.grade) + '|' + roomKey(d.section);
           const x = g[k] || (g[k] = { key: k, grade: d.grade || '—', room: d.section || '', m: 0, f: 0, u: 0 });
           const sx = genderKey(d.gender);
           if (sx === 'm') x.m++; else if (sx === 'f') x.f++; else x.u++;
         }
-        out({ running: false, done: list.length, total: list.length, groups: Object.values(g), school: me.name });
+        out({ running: false, done: list.length, total: list.length, groups: Object.values(g), school: schoolNameOf(me) });
       } catch (e) { out({ running: false, error: (e && e.message) || String(e) }); }
     }
     window.__emisSiteStats = () => { siteStatsApi(); return true; };
@@ -2860,7 +2871,7 @@
         const rows = [];
         for (const rec of list) {
           if (!rec || typeof rec !== 'object') continue;
-          const d = recordToData(rec, me.name);
+          const d = recordToData(rec, schoolNameOf(me));
           rows.push({
             id: rec.id, grade: d.grade || '', section: d.section || '',
             name: [d.name, d.father, d.grandfather, d.greatGrandfather].filter(Boolean).join(' '),
@@ -2881,14 +2892,14 @@
         const items = [];
         for (const rec of list) {
           if (!rec || typeof rec !== 'object') continue;
-          const d = recordToData(rec, me.name);
+          const d = recordToData(rec, schoolNameOf(me));
           items.push({
             name: [d.name, d.father, d.grandfather, d.greatGrandfather].filter(Boolean).join(' '),
             n: { name: d.name || '', father: d.father || '', grandfather: d.grandfather || '', greatGrandfather: d.greatGrandfather || '' },
             gov: d.governorate || '', place: d.placeSite || '', city: d.citySite || '',
           });
         }
-        out({ ok: true, school: me.name || '', items });
+        out({ ok: true, school: schoolNameOf(me), items });
       } catch (e) { out({ ok: false, error: (e && e.message) || String(e) }); }
     }
     window.__emisSitePlaces = () => { sitePlacesApi(); return true; };
@@ -2938,7 +2949,7 @@
         const list = await trpc('student.listForSchool', { schoolSlug: slug });
         const rec = (list || []).find(r => r && r.id === id);
         if (!rec) throw new Error('لم أجد الطالب في قائمة المدرسة');
-        const d = recordToData(rec, me && me.name);
+        const d = recordToData(rec, schoolNameOf(me));
         const k = norm(d.name) + norm(d.father) + norm(d.grandfather) + norm(d.greatGrandfather);
         gmSet(K_SEND, JSON.stringify({ id, k, d, issues: localIssues(d), t: Date.now() }));
       } catch (e) {
@@ -2957,7 +2968,7 @@
         try {
           const me = await trpc('school.me');
           const list = await trpc('student.listForSchool', { schoolSlug: me.slug });
-          issueMap = new Map((list || []).filter(Boolean).map(rec => [rec.id, localIssues(recordToData(rec, me.name))]));
+          issueMap = new Map((list || []).filter(Boolean).map(rec => [rec.id, localIssues(recordToData(rec, schoolNameOf(me)))]));
           issueT = Date.now();
         } catch { /* ignore */ }
         issueBusy = false;
@@ -3019,7 +3030,7 @@
           for (const [id, rec] of now.map) { const o = before.map.get(id); if (o && recSig(o) !== recSig(rec)) { hit = [o, rec]; break; } }
           if (!hit) continue;
           snap = now;
-          const d = recordToData(hit[1], now.me.name), od = recordToData(hit[0], now.me.name);
+          const d = recordToData(hit[1], schoolNameOf(now.me)), od = recordToData(hit[0], schoolNameOf(now.me));
           gmSet(K_UPD, JSON.stringify({ id: hit[1].id, k: keyOf(d), oldK: keyOf(od), d, od, t: Date.now() }));
           return;
         }
