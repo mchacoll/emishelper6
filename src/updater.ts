@@ -106,6 +106,22 @@ export function updateSizeMB(m: Manifest | null): string {
   return sz ? (sz / 1048576).toFixed(1) : '';
 }
 
+/** (v8.28) مشاركة التطبيق: رابط التحميل، أو ملف APK الشامل (يعمل على كل الهواتف) */
+export const APK_LINK = BASE + UNIVERSAL;
+export async function downloadApkForShare(onProgress: (p: number) => void): Promise<string> {
+  const dest = (FileSystem.cacheDirectory || '') + 'EMIS-Gateway.apk';
+  try {
+    await FileSystem.deleteAsync(dest, { idempotent: true });
+  } catch {
+    /* ignore */
+  }
+  const res = await FileSystem.createDownloadResumable(APK_LINK, dest, {}, d => {
+    if (d.totalBytesExpectedToWrite > 0) onProgress(d.totalBytesWritten / d.totalBytesExpectedToWrite);
+  }).downloadAsync();
+  if (!res || res.status !== 200) throw new Error('فشل التنزيل (' + (res ? res.status : '?') + ')');
+  return res.uri;
+}
+
 /** تنزيل APK الجديد ثم فتح شاشة التثبيت */
 export async function downloadAndInstall(onProgress: (p: number) => void): Promise<void> {
   const dest = (FileSystem.cacheDirectory || '') + 'emishelper-update.apk';

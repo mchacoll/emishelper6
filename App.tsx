@@ -26,7 +26,7 @@ import { type LogLine, SettingsScreen } from './src/SettingsScreen';
 import { colors, ROW, setThemeName, themed } from './src/theme';
 import { Icon, IconButton, type IconName, T } from './src/ui';
 import { UpdateModal } from './src/UpdateModal';
-import { fetchManifest, installedBuild, installedVersion, loadScript, type Manifest, updateScript } from './src/updater';
+import { APK_LINK, downloadApkForShare, fetchManifest, installedBuild, installedVersion, loadScript, type Manifest, updateScript } from './src/updater';
 
 type Pane = 'site' | 'emis';
 type Tab = Pane | 'excel';
@@ -106,6 +106,7 @@ function Main() {
   const [stats, setStats] = useState<StatsState>({ visible: false, site: { running: false }, emis: { running: false } });
   const [transfer, setTransfer] = useState<TransferState>({ visible: false, loading: false, list: [] });
   const [moving, setMoving] = useState<number | null>(null);
+  const [sharing, setSharing] = useState<number | null>(null);
   const [placeFix, setPlaceFix] = useState<PlaceFixState>({ visible: false, step: 'site' });
   const placeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const placeChanges = useRef<PlaceChange[]>([]);
@@ -859,6 +860,31 @@ function Main() {
 
   const reload = (p: Pane) => setReloadKey(k => ({ ...k, [p]: k[p] + 1 }));
 
+  /* ===================== مشاركة التطبيق ===================== */
+  const shareApp = () => {
+    Alert.alert('مشاركة التطبيق', 'كيف تريد مشاركة «بوابة EMIS»؟', [
+      { text: 'إلغاء', style: 'cancel' },
+      {
+        text: 'رابط التحميل',
+        onPress: () => Share.share({ message: `تطبيق «بوابة EMIS» — حمّله وثبّته من هذا الرابط:\n${APK_LINK}` }).catch(() => {}),
+      },
+      {
+        text: 'ملف APK',
+        onPress: async () => {
+          setSharing(0);
+          try {
+            const uri = await downloadApkForShare(p => setSharing(Math.max(0.01, p)));
+            setSharing(null);
+            await Sharing.shareAsync(uri, { mimeType: 'application/vnd.android.package-archive', dialogTitle: 'مشاركة بوابة EMIS' });
+          } catch (e) {
+            setSharing(null);
+            Alert.alert('تعذّرت المشاركة', (e as Error)?.message || '');
+          }
+        },
+      },
+    ]);
+  };
+
   /* ===================== كشف الهاتف والبطاقة الموحدة (من EMIS، قراءة فقط) ===================== */
   const armAuditTimer = () => {
     if (auditTimer.current) clearTimeout(auditTimer.current);
@@ -1341,6 +1367,8 @@ function Main() {
           setShowGuide(true);
         }}
         onCheckUpdate={() => checkUpdates(true)}
+        onShareApp={shareApp}
+        sharing={sharing}
         owner={!!settings.owner}
         theme={settings.theme || 'auto'}
         onTheme={t => saveSettings({ ...settings, theme: t })}

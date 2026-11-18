@@ -27,6 +27,8 @@ export function SettingsScreen(props: {
   onPlaceFix: () => void;
   opsCount: number;
   onCheckUpdate: () => void;
+  onShareApp: () => void;
+  sharing: number | null; // تقدّم تنزيل ملف المشاركة
   owner: boolean;
   onToggleOwner: () => void;
   theme: 'auto' | 'light' | 'dark';
@@ -202,6 +204,15 @@ export function SettingsScreen(props: {
             {props.owner ? (
               <Button kind="soft" icon="cloud-download-outline" label="التحقق من التحديث" onPress={props.onCheckUpdate} compact />
             ) : null}
+            <Button
+              kind="ghost"
+              icon="share-variant"
+              label={props.sharing !== null ? `جارٍ تجهيز الملف... ${Math.round(props.sharing * 100)}%` : 'مشاركة التطبيق (APK)'}
+              onPress={props.onShareApp}
+              busy={props.sharing !== null && props.sharing <= 0}
+              disabled={props.sharing !== null}
+              compact
+            />
           </Card>
 
           <SectionTitle>البيانات</SectionTitle>
